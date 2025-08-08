@@ -24,7 +24,7 @@ jobs:
     - name: Configure AWS credentials via OIDC
       uses: aws-actions/configure-aws-credentials@v2
       with:
-        role-to-assume: arn:aws:iam::477763023369:role/ShootflowOIDCRole
+        role-to-assume: arn:aws:iam::477763023369:role/ShootflowInfraStack-ShootflowEcrPublishRoleD613A83B-ck4os4eAt1k0
         aws-region: us-east-1
 
     # Step 3: Set up Python 3.10
