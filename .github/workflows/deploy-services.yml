@@ -6,6 +6,10 @@ on:
       - main  # Trigger on push to the main branch
   workflow_dispatch:  # Allow manual trigger of the workflow
 
+env:
+  ECR_REPOSITORY: shootflow-ecr-repo
+  IMAGE_TAG: ${{ github.sha }}
+
 permissions:
   id-token: write   # This is required for requesting the JWT
   contents: read    # This is required for actions/checkout
@@ -15,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    
+
     # Step 1: Check out the code
     - name: Checkout repository
       uses: actions/checkout@v3
@@ -52,6 +56,13 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
+    # Debug step to verify variables are set correctly
+    - name: Debug image info
+      run: |
+        echo "ECR Registry: ${{ steps.login-ecr.outputs.registry }}"
+        echo "ECR Repository: ${{ env.ECR_REPOSITORY }}"
+        echo "Image Tag: ${{ env.IMAGE_TAG }}"
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
 
@@ -66,6 +77,7 @@ jobs:
           ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
+
     - name: Output image URI for deployment
       id: image-uri
-      run: echo "::set-output name=uri::${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
+      run: echo "uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT
