@@ -1,0 +1,28 @@
+# language: ini
+# settings.ini (place at repo root or a config/ folder — see config.py below)
+[default]
+AWS_REGION = "us-east-1"
+DDB_TABLE = "shootflow-db"
+
+EXIF_BLOCKLIST = ["canon", "nikon", "sony", "fujifilm", "fuji", "lumix", "panasonic", "olympus", "leica", "pentax", "ricoh", "hasselblad", "phaseone", "sigma", "tamron", "tokina", "zeiss", "voigtlander", "dji", "gopro", "rf", "ef", "e-mount", "fe", "zf", "z-mount", "m-mount", "x-mount", "f-mount", "mft", "micro four thirds", "four thirds", "nikkor", "dslr", "mirrorless", "full frame", "aps-c", "crop sensor"]
+EXIF_MAX_TEXT_LENGTH = 20000
+EXIF_BASE64_SNIFF_PREFIX_LEN = 200
+EXIF_LARGE_COLLECTION_SIZE = 2000
+
+S3_INGEST_DRY_RUN = true
+S3_INGEST_STATUS_READY = "READY"
+S3_INGEST_PARTITION_PREFIX = "PHOTO#"
+S3_INGEST_SORT_KEY_METADATA = "METADATA"
+S3_INGEST_READY_PREFIX = "ready/"
+
+[development]
+# Example overrides for dev
+DDB_TABLE = "ShootflowInfraStack-ShootFlowPhotoMetadataD918DE39-36NG2C1D5J36"
+
+[production]
+# Production-specific overrides (if any)
+DDB_TABLE = "shootflow-db"
+
+[exif]
+
+

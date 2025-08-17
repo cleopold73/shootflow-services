@@ -9,6 +9,9 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.10"
 boto3 = "^1.40.5"
+dynaconf = "^3.2.11"
+pytest = "^8.4.1"
+pyexiftool = "^0.5.6"
 
 
 [build-system]
