@@ -1,21 +1,23 @@
-# Python
 #!/usr/bin/env python3
+# python
 import base64
 import json
 import os
 import tempfile
 from typing import Iterable, Optional
-from xml.etree import ElementTree as ET
+import logging
 
 import boto3
-import flickrapi
+import flickr_api
 
 from shootflow.shared.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class FlickrAPIClient:
     """
-    Thin wrapper around flickrapi suitable for expansion.
+    Thin wrapper around flickr_api suitable for expansion.
     Credentials are loaded automatically from AWS Secrets Manager.
 
     settings.toml keys:
@@ -27,11 +29,17 @@ class FlickrAPIClient:
         "api_key": "...",
         "api_secret": "...",
         "oauth_token": "...",
-        "oauth_token_secret": "..."
+        "oauth_token_secret": "...",
+        "user_nsid": "...",    # optional
+        "username": "...",     # optional
+        "access_level": "write"  # optional
       }
     """
 
-    def __init__(self, *, store_token: bool = False) -> None:
+    def __init__(self, *, store_token: bool = True) -> None:
+        # store_token retained for signature compatibility; flickr_api handles auth differently.
+        _ = store_token
+
         secret_name = settings.FLICKR_SECRET_NAME
         if not secret_name:
             raise RuntimeError("FLICKR_SECRET_NAME is not configured in settings.toml")
@@ -55,24 +63,48 @@ class FlickrAPIClient:
         api_secret = str(data.get("api_secret", "")).strip()
         oauth_token = str(data.get("oauth_token", "")).strip()
         oauth_token_secret = str(data.get("oauth_token_secret", "")).strip()
+        user_nsid = (str(data.get("user_nsid", "")).strip() or None)
+        username = (str(data.get("username", "")).strip() or None)
 
         if not all([api_key, api_secret, oauth_token, oauth_token_secret]):
             raise RuntimeError("Flickr secret missing required keys (api_key, api_secret, oauth_token, oauth_token_secret)")
 
-        # Initialize flickrapi; upload returns XML regardless of format
-        self._flickr = flickrapi.FlickrAPI(
-            api_key,
-            api_secret,
-            format="parsed-json",
-            store_token=store_token,
-            cache=True,
-        )
+        # Configure the library keys
+        flickr_api.set_keys(api_key=api_key, api_secret=api_secret)
 
-        # Inject access tokens so calls are signed without re-auth
-        self._flickr.token_cache.token = {
-            "oauth_token": oauth_token,
-            "oauth_token_secret": oauth_token_secret,
-        }
+        # Always construct AuthHandler and set access token via set_access_token (creates proper OAuthToken object)
+        auth = flickr_api.auth.AuthHandler()
+        if hasattr(auth, "set_access_token") and callable(getattr(auth, "set_access_token")):
+            auth.set_access_token(oauth_token, oauth_token_secret)
+        else:
+            # Fallback for odd versions without set_access_token: ensure access_token has key/secret attrs
+            TokenCls = getattr(flickr_api.auth, "OAuthToken", None)
+
+            if TokenCls is not None:
+                token_obj = TokenCls(oauth_token, oauth_token_secret)
+            else:
+                # Minimal shim with the required attributes
+                class _Tok:
+                    def __init__(self, key, secret):
+                        self.key = key
+                        self.secret = secret
+                token_obj = _Tok(oauth_token, oauth_token_secret)
+
+            setattr(auth, "access_token", token_obj)
+
+        # Optional: store user metadata on the handler if provided (not required for auth)
+        if user_nsid:
+            try:
+                auth.user_nsid = user_nsid
+            except Exception:
+                pass
+        if username:
+            try:
+                auth.username = username
+            except Exception:
+                pass
+
+        flickr_api.set_auth_handler(auth)
 
     @staticmethod
     def _tags_to_string(tags: Optional[Iterable[str]]) -> Optional[str]:
@@ -83,49 +115,51 @@ class FlickrAPIClient:
     @staticmethod
     def _extract_photo_id(upload_resp) -> str:
         """
-        flickrapi.upload returns an XML Element like:
-          <rsp stat="ok"><photoid>12345</photoid></rsp>
+        flickr_api.upload typically returns a Photo object with attribute 'id'.
+        Fall back to handling a dict or direct string/int if returned.
         """
         if upload_resp is None:
             raise RuntimeError("Empty response from Flickr upload")
 
-        try:
-            root = upload_resp if isinstance(upload_resp, ET.Element) else ET.fromstring(upload_resp)
-        except Exception as e:
-            raise RuntimeError(f"Unexpected upload response (not XML): {e}")
+        # Photo object path
+        pid = getattr(upload_resp, "id", None)
+        if pid:
+            return str(pid)
 
-        stat = root.attrib.get("stat")
-        if stat != "ok":
-            err = root.find("err")
-            if err is not None:
-                code = err.attrib.get("code")
-                msg = err.attrib.get("msg")
-                raise RuntimeError(f"Flickr upload failed: code={code} msg={msg}")
-            raise RuntimeError("Flickr upload failed with unknown error")
+        # Dict-like path
+        if isinstance(upload_resp, dict):
+            for key in ("id", "photoid", "photo_id"):
+                if key in upload_resp and upload_resp[key]:
+                    return str(upload_resp[key])
 
-        pid = root.findtext("photoid")
-        if not pid:
-            raise RuntimeError("Upload succeeded but photoid missing in response")
-        return pid.strip()
+        # Primitive
+        if isinstance(upload_resp, (str, int)):
+            return str(upload_resp)
+
+        raise RuntimeError(f"Unexpected upload response type: {type(upload_resp)!r}")
 
     @staticmethod
-    def _to_flag(value) -> int:
+    def _to_flag(value: Optional[bool | int]) -> Optional[str]:
         """
-        Coerce a boolean-like value to 0/1 int accepted by Flickr API.
+        Coerce a boolean-like value to a "0"/"1" string accepted by Flickr API.
+        Return None to omit the parameter entirely (lets Flickr use account defaults).
         """
+        if value is None:
+            return None
         if isinstance(value, bool):
-            return 1 if value else 0
+            return "1" if value else "0"
         try:
-            return 1 if int(value) else 0
+            return "1" if int(value) else "0"
         except Exception:
-            return 0
+            return "0"
 
     def verify_auth(self) -> dict:
         """
-        Optional: simple auth sanity check (returns user info from flickr.test.login).
+        Simple auth sanity check (returns user info from flickr.test.login).
         Raises on error.
         """
-        return self._flickr.test.login()
+        # flickr_api exposes methods directly in the module namespace
+        return flickr_api.test.login()
 
     def upload_file(
         self,
@@ -150,15 +184,28 @@ class FlickrAPIClient:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        kwargs = {
-            "filename": file_path,
-            "title": title or "",
-            "description": description or "",
-            "tags": self._tags_to_string(tags),
-            "is_public": self._to_flag(is_public),
-            "is_friend": self._to_flag(is_friend),
-            "is_family": self._to_flag(is_family),
+        kwargs: dict = {
+            "photo_file": file_path,
         }
+        if title is not None:
+            kwargs["title"] = title
+        if description is not None:
+            kwargs["description"] = description
+        tag_str = self._tags_to_string(tags)
+        if tag_str:
+            kwargs["tags"] = tag_str
+
+        # Preserve "0" by sending string flags and only omitting when None.
+        flag = self._to_flag(is_public)
+        if flag is not None:
+            kwargs["is_public"] = flag
+        flag = self._to_flag(is_friend)
+        if flag is not None:
+            kwargs["is_friend"] = flag
+        flag = self._to_flag(is_family)
+        if flag is not None:
+            kwargs["is_family"] = flag
+
         if safety_level is not None:
             kwargs["safety_level"] = int(safety_level)
         if content_type is not None:
@@ -166,7 +213,7 @@ class FlickrAPIClient:
         if hidden is not None:
             kwargs["hidden"] = int(hidden)
 
-        resp = self._flickr.upload(**kwargs)
+        resp = flickr_api.upload(**kwargs)
         return self._extract_photo_id(resp)
 
     def upload_bytes(
