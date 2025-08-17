@@ -6,7 +6,7 @@ authors = ["Corey Leopold <cleopold73@gmail.com>"]
 license = "MIT"
 readme = "README.md"
 packages = [
-  { include = "shootflow", from = "src" }
+  { include = "shootflow" }
 ]
 
 [tool.poetry.dependencies]
