@@ -6,6 +6,10 @@ DDB_TABLE = "shootflow-db"
 S3_BUCKET = "bucket"
 
 FLICKR_SECRET_NAME = "FLICKR-API"
+FLICKR_UPLOAD_TIMEOUT_SECONDS = 120
+FLICKR_UPLOAD_MAX_RETRIES = 3
+FLICKR_UPLOAD_BACKOFF_SECONDS = 2.0
+
 
 EXIF_BLOCKLIST = ["canon", "nikon", "sony", "fujifilm", "fuji", "lumix", "panasonic", "olympus", "leica", "pentax", "ricoh", "hasselblad", "phaseone", "sigma", "tamron", "tokina", "zeiss", "voigtlander", "dji", "gopro", "rf", "ef", "e-mount", "fe", "zf", "z-mount", "m-mount", "x-mount", "f-mount", "mft", "micro four thirds", "four thirds", "nikkor", "dslr", "mirrorless", "full frame", "aps-c", "crop sensor"]
 EXIF_MAX_TEXT_LENGTH = 20000
@@ -21,6 +25,7 @@ S3_INGEST_READY_PREFIX = "ready/"
 [development]
 # Example overrides for dev
 DDB_TABLE = "ShootflowInfraStack-ShootFlowPhotoMetadataD918DE39-36NG2C1D5J36"
+S3_BUCKET = "shootflowupload"
 
 [production]
 # Production-specific overrides (if any)

@@ -6,9 +6,16 @@ import os
 import tempfile
 from typing import Iterable, Optional
 import logging
+import time
 
 import boto3
 import flickr_api
+
+# requests is an indirect dep of flickr-api; used only for exception types
+try:
+    import requests
+except Exception:  # Fallback if requests import path changes
+    requests = None  # type: ignore
 
 from shootflow.shared.config import settings
 
@@ -23,6 +30,11 @@ class FlickrAPIClient:
     settings.toml keys:
       - AWS_REGION: AWS region for Secrets Manager
       - FLICKR_SECRET_NAME: Name/ARN of the secret containing Flickr credentials
+
+    Optional tunables (with defaults):
+      - FLICKR_UPLOAD_TIMEOUT_SECONDS = 120
+      - FLICKR_UPLOAD_MAX_RETRIES = 3
+      - FLICKR_UPLOAD_BACKOFF_SECONDS = 2.0
 
     Secret JSON structure:
       {
@@ -39,6 +51,10 @@ class FlickrAPIClient:
     def __init__(self, *, store_token: bool = True) -> None:
         # store_token retained for signature compatibility; flickr_api handles auth differently.
         _ = store_token
+
+        self._upload_timeout_s: int = settings.FLICKR_UPLOAD_TIMEOUT_SECONDS
+        self._upload_max_retries: int = settings.FLICKR_UPLOAD_MAX_RETRIES
+        self._upload_backoff_seconds: float = settings.FLICKR_UPLOAD_BACKOFF_SECONDS
 
         secret_name = settings.FLICKR_SECRET_NAME
         if not secret_name:
@@ -102,6 +118,18 @@ class FlickrAPIClient:
 
         flickr_api.set_auth_handler(auth)
 
+        # Ensure flickr_api.upload uses a sufficiently large timeout
+        # flickr_api.upload.post(...) calls requests.post(..., timeout=get_timeout())
+        # We override get_timeout to return our configured value.
+        try:
+            import flickr_api.upload as _fup  # type: ignore
+            def _client_timeout_override():
+                return self._upload_timeout_s
+            _fup.get_timeout = _client_timeout_override  # type: ignore[attr-defined]
+            logger.debug(f"Flickr upload timeout patched to {self._upload_timeout_s}s")
+        except Exception:
+            logger.warning("Could not patch flickr_api upload timeout; uploads may still time out.", exc_info=True)
+
     @staticmethod
     def _tags_to_string(tags: Optional[Iterable[str]]) -> Optional[str]:
         if not tags:
@@ -157,6 +185,42 @@ class FlickrAPIClient:
         # flickr_api exposes methods directly in the module namespace
         return flickr_api.test.login()
 
+    def _upload_with_retries(self, **kwargs):
+        """
+        Call flickr_api.upload with retries on transient network timeouts.
+        """
+        last_exc: Optional[BaseException] = None
+        for attempt in range(1, self._upload_max_retries + 1):
+            try:
+                return flickr_api.upload(**kwargs)
+            except Exception as exc:
+                is_timeout = False
+                is_conn_err = False
+
+                if requests is not None:
+                    is_timeout = isinstance(exc, requests.exceptions.ReadTimeout)  # type: ignore[attr-defined]
+                    is_conn_err = isinstance(exc, requests.exceptions.ConnectionError)  # type: ignore[attr-defined]
+                else:
+                    # Fallback heuristic by class name if requests import failed
+                    name = type(exc).__name__
+                    is_timeout = name == "ReadTimeout"
+                    is_conn_err = name == "ConnectionError"
+
+                if is_timeout or is_conn_err:
+                    last_exc = exc
+                    if attempt < self._upload_max_retries:
+                        sleep_s = self._upload_backoff_seconds * (2 ** (attempt - 1))
+                        logger.warning(
+                            f"Flickr upload attempt {attempt} failed ({type(exc).__name__}). "
+                            f"Retrying in {sleep_s:.1f}s..."
+                        )
+                        time.sleep(sleep_s)
+                        continue
+                # Non-retryable or retries exhausted
+                raise
+        # If we exit loop without returning, re-raise a clearer error
+        raise RuntimeError(f"Flickr upload failed after {self._upload_max_retries} attempts: {last_exc}") from last_exc
+
     def upload_file(
         self,
         file_path: str,
@@ -209,7 +273,8 @@ class FlickrAPIClient:
         if hidden is not None:
             kwargs["hidden"] = int(hidden)
 
-        resp = flickr_api.upload(**kwargs)
+        # Use retrying wrapper
+        resp = self._upload_with_retries(**kwargs)
         return self._extract_photo_id(resp)
 
     def upload_bytes(
