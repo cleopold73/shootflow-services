@@ -21,4 +21,4 @@ COPY dist/${WHEEL_FILE} /tmp/${WHEEL_FILE}
 # Install your package
 RUN pip install --no-cache-dir /tmp/${WHEEL_FILE} && rm -f /tmp/${WHEEL_FILE}
 
-CMD ["shootflow.handlers.s3_ingest.handler"]
+CMD ["shootflow.handlers.handler.handler"]

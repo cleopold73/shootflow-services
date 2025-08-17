@@ -1,3 +1,4 @@
+# Python
 import hashlib
 import json
 import os
@@ -6,7 +7,7 @@ import tempfile
 import time
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
 
 import boto3
 from botocore.exceptions import ClientError
@@ -30,6 +31,7 @@ STATUS_READY = settings.S3_INGEST_STATUS_READY
 PARTITION_PREFIX = settings.S3_INGEST_PARTITION_PREFIX
 SORT_KEY_METADATA = settings.S3_INGEST_SORT_KEY_METADATA
 READY_PREFIX = settings.S3_INGEST_READY_PREFIX
+
 
 def _compute_sha256_and_save_temp_streaming(bucket: str, key: str) -> Tuple[str, str]:
     hasher = hashlib.sha256()
@@ -102,6 +104,7 @@ def _ingest_single_record(bucket: str, key: str) -> None:
                     f"error={err} duration_ms={duration_ms}"
                 )
                 metrics.count("IngestFailed", 1.0)
+                raise RuntimeError(f"put_item_failed err={err}")
     except Exception as e:
         logger.exception(f"ingest_exception bucket={bucket} key={key} photoId={photoId} error={e}")
         metrics.count("IngestFailed", 1.0)
@@ -115,16 +118,26 @@ def _ingest_single_record(bucket: str, key: str) -> None:
 
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    logger.info(f"handler_start records={len(event.get('Records', []))}")
+    """
+    S3 event handler invoked via the generic router using adapter 'sqs_s3'.
+
+    The generic adapter unwraps SQS and calls this handler with a standard S3
+    event shape. We process each S3 record independently and return a simple
+    summary. Partial-batch retry semantics are handled by the router, not here.
+    """
+    s3_records = event.get("Records", []) or []
+    logger.info(f"s3_ingest_start s3_records={len(s3_records)}")
+
     processed = 0
     errors = 0
-    for rec in event.get("Records", []):
+
+    for s3r in s3_records:
         try:
-            s3 = rec.get("s3", {})
+            s3 = s3r.get("s3", {})
             bucket = s3.get("bucket", {}).get("name")
             key = s3.get("object", {}).get("key")
             if not bucket or not key:
-                logger.warning(f"malformed_s3_event_record record={rec}")
+                logger.warning(f"malformed_s3_event_record record={s3r}")
                 errors += 1
                 continue
             key = _maybe_url_unquote(key)
@@ -132,9 +145,9 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             processed += 1
         except Exception as e:
             errors += 1
-            logger.exception(f"record_processing_failed error={e} record={rec}")
+            logger.exception(f"s3_record_processing_failed error={e} record={s3r}")
 
-    logger.info(f"handler_done processed={processed} errors={errors}")
+    logger.info(f"s3_ingest_done processed={processed} errors={errors}")
     return {"processed": processed, "errors": errors}
 
 

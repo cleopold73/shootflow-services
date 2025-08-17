@@ -1,5 +1,4 @@
 # Python
-import json
 import hashlib
 
 import pytest
@@ -13,14 +12,14 @@ def test_maybe_url_unquote():
 
 
 def test_handler_success_ingest_unlinks_temp_and_counts_metric(
-        fake_s3_factory,
-        wire_aws_clients,
-        metrics_spy,
-        exif_stub,
-        event_factory,
-        unlink_recorder,
-        repo_factory,
-        monkeypatch,
+    fake_s3_factory,
+    wire_aws_clients,
+    metrics_spy,
+    exif_stub,
+    unlink_recorder,
+    repo_factory,
+    event_factory,
+    monkeypatch,
 ):
     bucket = "test-bucket"
     key = "ready/photo.jpg"
@@ -40,7 +39,8 @@ def test_handler_success_ingest_unlinks_temp_and_counts_metric(
     # Record temp cleanup
     called_paths = unlink_recorder.record_in(s3_ingest)
 
-    result = s3_ingest.handler(event_factory(bucket, key), None)
+    event = event_factory(bucket, key)  # direct S3 event
+    result = s3_ingest.handler(event, None)
 
     assert result == {"processed": 1, "errors": 0}
 
@@ -58,7 +58,7 @@ def test_handler_success_ingest_unlinks_temp_and_counts_metric(
 
 
 def test_handler_duplicate_ingest_counts_duplicate(
-        fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
+    fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
 ):
     bucket = "test-bucket"
     key = "ready/dup.jpg"
@@ -79,7 +79,7 @@ def test_handler_duplicate_ingest_counts_duplicate(
 
 
 def test_handler_ddb_error_counts_failed(
-        fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
+    fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
 ):
     bucket = "test-bucket"
     key = "ready/fail.jpg"
@@ -94,13 +94,14 @@ def test_handler_ddb_error_counts_failed(
 
     result = s3_ingest.handler(event_factory(bucket, key), None)
 
-    assert result == {"processed": 1, "errors": 0}
+    # Error in ingest should be counted, no processed increment
+    assert result == {"processed": 0, "errors": 1}
     assert ("IngestFailed", 1.0) in metrics_spy.calls
     assert len(repo.calls) == 1
 
 
 def test_handler_skips_non_ready_prefix_but_counts_as_processed(
-        fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
+    fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
 ):
     bucket = "test-bucket"
     key = "uploads/photo.jpg"  # not under ready/ prefix
@@ -115,13 +116,14 @@ def test_handler_skips_non_ready_prefix_but_counts_as_processed(
 
     result = s3_ingest.handler(event_factory(bucket, key), None)
 
+    # Considered processed (no retry), but nothing ingested
     assert result == {"processed": 1, "errors": 0}
-    # No ingest should occur for non-ready prefix
     assert repo.calls == []
     assert not any(name in ("IngestSucceeded", "IngestDuplicate", "IngestFailed") for name, _ in metrics_spy.calls)
 
 
 def test_handler_malformed_record_increments_errors(metrics_spy):
+    # Direct S3 event with malformed record (missing bucket/name or object/key)
     event = {"Records": [{"s3": {"bucket": {}, "object": {}}}]}
 
     result = s3_ingest.handler(event, None)
@@ -130,7 +132,9 @@ def test_handler_malformed_record_increments_errors(metrics_spy):
     assert metrics_spy.calls == []
 
 
-def test_handler_ingest_exception_increments_errors_and_counts_failed(metrics_spy, event_factory, repo_factory, monkeypatch):
+def test_handler_ingest_exception_increments_errors_and_counts_failed(
+    metrics_spy, event_factory, repo_factory, monkeypatch
+):
     bucket = "test-bucket"
     key = "ready/will-crash.jpg"
 
@@ -150,7 +154,7 @@ def test_handler_ingest_exception_increments_errors_and_counts_failed(metrics_sp
 
 
 def test_handler_url_decoding_before_ingest(
-        fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
+    fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
 ):
     bucket = "test-bucket"
     encoded_key = "ready/IMG%20123+Sunset.jpg"
