@@ -9,6 +9,8 @@ on:
 env:
   ECR_REPOSITORY: shootflow-ecr-repo
   IMAGE_TAG: ${{ github.sha }}
+  EXIFTOOL_VERSION: '13.30'  # Single source of truth
+  PYTHON_VERSION: '3.10'     # Single source of truth for Python
 
 permissions:
   id-token: write
@@ -24,7 +26,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install cpanminus and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cpanminus make
+
+      - name: Install ExifTool (pinned)
+        run: |
+          sudo cpanm --notest --no-man-pages Image::ExifTool@${{ env.EXIFTOOL_VERSION }}
 
       - name: Install pipx
         run: |
@@ -57,7 +68,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install pipx
         run: |
@@ -89,19 +100,9 @@ jobs:
           echo "WHEEL_FILE=${WHEEL_FILE}" | tee -a "$GITHUB_ENV"
           echo "wheel_file=${WHEEL_FILE}" >> "$GITHUB_OUTPUT"
 
-      - name: List built artifacts
-        run: ls -la dist
-
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
-
-      - name: Debug image info
-        run: |
-          echo "ECR Registry: ${{ steps.login-ecr.outputs.registry }}"
-          echo "ECR Repository: ${{ env.ECR_REPOSITORY }}"
-          echo "Image Tag: ${{ env.IMAGE_TAG }}"
-          echo "Wheel File: ${{ env.WHEEL_FILE }}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -117,9 +118,7 @@ jobs:
             ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:shootflow-services-latest
           build-args: |
             WHEEL_FILE=${{ env.WHEEL_FILE }}
+            EXIFTOOL_VERSION=${{ env.EXIFTOOL_VERSION }}
+            PYTHON_VERSION=${{ env.PYTHON_VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Output image URI for deployment
-        id: image-uri
-        run: echo "uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT
