@@ -3,87 +3,96 @@ name: Deploy Infrastructure
 on:
   push:
     branches:
-      - main  # Trigger on push to the main branch
-  workflow_dispatch:  # Allow manual trigger of the workflow
+      - main
+  workflow_dispatch:
 
 env:
   ECR_REPOSITORY: shootflow-ecr-repo
   IMAGE_TAG: ${{ github.sha }}
 
 permissions:
-  id-token: write   # This is required for requesting the JWT
-  contents: read    # This is required for actions/checkout
+  id-token: write
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    # Step 1: Check out the code
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::477763023369:role/ShootflowInfraStack-ShootflowEcrPublishRoleD613A83B-ck4os4eAt1k0
+          aws-region: us-east-1
 
-    # Step 2: Configure AWS credentials via OIDC
-    - name: Configure AWS credentials via OIDC
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        role-to-assume: arn:aws:iam::477763023369:role/ShootflowInfraStack-ShootflowEcrPublishRoleD613A83B-ck4os4eAt1k0
-        aws-region: us-east-1
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
 
-    # Step 3: Set up Python 3.10
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'  # Use Python 3.10 for the workflow
+      - name: Install pipx
+        run: |
+          python3 -m pip install --user pipx
+          python3 -m pipx ensurepath
 
-    # Step 4: Install pipx
-    - name: Install pipx
-      run: |
-        python3 -m pip install --user pipx
-        python3 -m pipx ensurepath
+      - name: Install Poetry
+        run: |
+          pipx install poetry==1.8.4
 
-    # Step 5: Install Poetry using pipx
-    - name: Install Poetry
-      run: |
-        pipx install poetry==1.8.4
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-ansi --no-root
 
-    # Step 6: Install dependencies using Poetry
-    - name: Install dependencies
-      run: poetry install --no-interaction --no-ansi --no-root
+      - name: Build wheel
+        run: poetry build -f wheel
 
-    - name: Build wheel
-      run: poetry build -f wheel
+      - name: Determine wheel filename
+        id: wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/*.whl)
+          if [[ ${#files[@]} -ne 1 ]]; then
+            echo "Expected exactly 1 wheel in dist/, found ${#files[@]}: ${files[*]-<none>}" >&2
+            exit 1
+          fi
+          WHEEL_FILE="$(basename "${files[0]}")"
+          echo "WHEEL_FILE=${WHEEL_FILE}" | tee -a "$GITHUB_ENV"
+          echo "wheel_file=${WHEEL_FILE}" >> "$GITHUB_OUTPUT"
 
-    - name: List built artifacts
-      run: ls -la dist
+      - name: List built artifacts
+        run: ls -la dist
 
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v1
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
 
-    # Debug step to verify variables are set correctly
-    - name: Debug image info
-      run: |
-        echo "ECR Registry: ${{ steps.login-ecr.outputs.registry }}"
-        echo "ECR Repository: ${{ env.ECR_REPOSITORY }}"
-        echo "Image Tag: ${{ env.IMAGE_TAG }}"
+      - name: Debug image info
+        run: |
+          echo "ECR Registry: ${{ steps.login-ecr.outputs.registry }}"
+          echo "ECR Repository: ${{ env.ECR_REPOSITORY }}"
+          echo "Image Tag: ${{ env.IMAGE_TAG }}"
+          echo "Wheel File: ${{ env.WHEEL_FILE }}"
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-    - name: Build, tag, and push image to Amazon ECR
-      uses: docker/build-push-action@v4
-      with:
-        context: .
-        file: ./Dockerfile
-        push: ${{ github.event_name != 'pull_request' }}
-        tags: |
-          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:shootflow-services-${{ env.IMAGE_TAG }}
-          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:shootflow-services-latest
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+      - name: Build, tag, and push image to Amazon ECR
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:shootflow-services-${{ env.IMAGE_TAG }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:shootflow-services-latest
+          build-args: |
+            WHEEL_FILE=${{ env.WHEEL_FILE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-    - name: Output image URI for deployment
-      id: image-uri
-      run: echo "uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT
+      - name: Output image URI for deployment
+        id: image-uri
+        run: echo "uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT
