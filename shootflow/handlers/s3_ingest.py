@@ -9,23 +9,19 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple, List
 
-import boto3
-from botocore.exceptions import ClientError
-
 from shootflow.shared.config import settings
 from shootflow.shared.metrics import metrics
 from shootflow.shared.exif import run_exiftool_json, parse_exif_fields
-from shootflow.shared.ddb_repo import PhotoRepository  # NEW
+from shootflow.shared.ddb_repo import PhotoRepository
+from shootflow.shared.s3 import S3Storage
 
 logger = logging.getLogger(__name__)
 
-AWS_REGION = settings.AWS_REGION
-DDB_TABLE = settings.DDB_TABLE
-
-_s3 = boto3.client("s3", region_name=AWS_REGION)
-
 # Centralized DynamoDB access via repository
-_repo = PhotoRepository(table_name=DDB_TABLE, region_name=AWS_REGION)
+_repo = PhotoRepository()
+
+# Centralized S3 access via shared interface
+_s3_store = S3Storage()
 
 STATUS_READY = settings.S3_INGEST_STATUS_READY
 PARTITION_PREFIX = settings.S3_INGEST_PARTITION_PREFIX
@@ -34,21 +30,8 @@ READY_PREFIX = settings.S3_INGEST_READY_PREFIX
 
 
 def _compute_sha256_and_save_temp_streaming(bucket: str, key: str) -> Tuple[str, str]:
-    hasher = hashlib.sha256()
-    resp = _s3.get_object(Bucket=bucket, Key=key)
-    body = resp["Body"]
-
-    tmp = tempfile.NamedTemporaryFile(delete=False)
-    tmp_path = tmp.name
-    with tmp as f:
-        while True:
-            chunk = body.read(1024 * 1024)  # 1MB
-            if not chunk:
-                break
-            hasher.update(chunk)
-            f.write(chunk)
-
-    return hasher.hexdigest(), tmp_path
+    # Delegates to shared S3 interface
+    return _s3_store.stream_to_temp_and_sha256(bucket, key)
 
 
 def _maybe_url_unquote(key: str) -> str:

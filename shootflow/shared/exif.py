@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def _load_blocklist() -> set[str]:
-    raw = settings.get("EXIF_BLOCKLIST")
+    raw = settings.EXIF_BLOCKLIST
     if not raw:
         return set()
     # Accept list/set/tuple or comma-separated string
@@ -26,9 +26,9 @@ def _load_blocklist() -> set[str]:
 GEAR_TAG_BLOCKLIST: set[str] = _load_blocklist()
 
 # Tunables (sourced from central settings)
-EXIF_MAX_TEXT_LENGTH: int = settings.get("EXIF_MAX_TEXT_LENGTH")
-EXIF_BASE64_SNIFF_PREFIX_LEN: int = settings.get("EXIF_BASE64_SNIFF_PREFIX_LEN")
-EXIF_LARGE_COLLECTION_SIZE: int = settings.get("EXIF_LARGE_COLLECTION_SIZE")
+EXIF_MAX_TEXT_LENGTH: int = settings.EXIF_MAX_TEXT_LENGTH
+EXIF_BASE64_SNIFF_PREFIX_LEN: int = settings.EXIF_BASE64_SNIFF_PREFIX_LEN
+EXIF_LARGE_COLLECTION_SIZE: int = settings.EXIF_LARGE_COLLECTION_SIZE
 
 
 def _maybe_put(target: Dict[str, Any], key: str, value: Any) -> None:

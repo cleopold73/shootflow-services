@@ -3,6 +3,9 @@
 [default]
 AWS_REGION = "us-east-1"
 DDB_TABLE = "shootflow-db"
+S3_BUCKET = "bucket"
+
+FLICKR_SECRET_NAME = "FLICKR-API"
 
 EXIF_BLOCKLIST = ["canon", "nikon", "sony", "fujifilm", "fuji", "lumix", "panasonic", "olympus", "leica", "pentax", "ricoh", "hasselblad", "phaseone", "sigma", "tamron", "tokina", "zeiss", "voigtlander", "dji", "gopro", "rf", "ef", "e-mount", "fe", "zf", "z-mount", "m-mount", "x-mount", "f-mount", "mft", "micro four thirds", "four thirds", "nikkor", "dslr", "mirrorless", "full frame", "aps-c", "crop sensor"]
 EXIF_MAX_TEXT_LENGTH = 20000

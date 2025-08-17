@@ -1,8 +1,6 @@
 # Python
 import hashlib
 
-import pytest
-
 import shootflow.handlers.s3_ingest as s3_ingest
 
 
@@ -13,7 +11,7 @@ def test_maybe_url_unquote():
 
 def test_handler_success_ingest_unlinks_temp_and_counts_metric(
     fake_s3_factory,
-    wire_aws_clients,
+    fake_s3_store_factory,
     metrics_spy,
     exif_stub,
     unlink_recorder,
@@ -26,7 +24,7 @@ def test_handler_success_ingest_unlinks_temp_and_counts_metric(
 
     payload = b"hello world"
     fake_s3 = fake_s3_factory({key: payload})
-    wire_aws_clients(s3_ingest, s3=fake_s3)
+    s3_ingest._s3_store = fake_s3_store_factory(fake_s3)
 
     # Repo stub and metrics spy
     repo = repo_factory("success")
@@ -58,13 +56,13 @@ def test_handler_success_ingest_unlinks_temp_and_counts_metric(
 
 
 def test_handler_duplicate_ingest_counts_duplicate(
-    fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
+    fake_s3_factory, fake_s3_store_factory, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
 ):
     bucket = "test-bucket"
     key = "ready/dup.jpg"
 
     fake_s3 = fake_s3_factory({key: b"dup"})
-    wire_aws_clients(s3_ingest, s3=fake_s3)
+    s3_ingest._s3_store = fake_s3_store_factory(fake_s3)
 
     repo = repo_factory("duplicate")
     monkeypatch.setattr(s3_ingest, "_repo", repo, raising=True)
@@ -79,13 +77,13 @@ def test_handler_duplicate_ingest_counts_duplicate(
 
 
 def test_handler_ddb_error_counts_failed(
-    fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
+    fake_s3_factory, fake_s3_store_factory, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
 ):
     bucket = "test-bucket"
     key = "ready/fail.jpg"
 
     fake_s3 = fake_s3_factory({key: b"data"})
-    wire_aws_clients(s3_ingest, s3=fake_s3)
+    s3_ingest._s3_store = fake_s3_store_factory(fake_s3)
 
     repo = repo_factory("error")
     monkeypatch.setattr(s3_ingest, "_repo", repo, raising=True)
@@ -101,13 +99,13 @@ def test_handler_ddb_error_counts_failed(
 
 
 def test_handler_skips_non_ready_prefix_but_counts_as_processed(
-    fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
+    fake_s3_factory, fake_s3_store_factory, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
 ):
     bucket = "test-bucket"
     key = "uploads/photo.jpg"  # not under ready/ prefix
 
     fake_s3 = fake_s3_factory({key: b"irrelevant"})
-    wire_aws_clients(s3_ingest, s3=fake_s3)
+    s3_ingest._s3_store = fake_s3_store_factory(fake_s3)
 
     repo = repo_factory("success")
     monkeypatch.setattr(s3_ingest, "_repo", repo, raising=True)
@@ -143,7 +141,6 @@ def test_handler_ingest_exception_increments_errors_and_counts_failed(
 
     # Force the compute step to raise before repository is used
     monkeypatch.setattr(s3_ingest, "_compute_sha256_and_save_temp_streaming", boom, raising=True)
-    monkeypatch.setattr(s3_ingest, "_s3", object(), raising=True)
     monkeypatch.setattr(s3_ingest, "_repo", repo_factory("success"), raising=True)
     monkeypatch.setattr(s3_ingest, "metrics", metrics_spy, raising=True)
 
@@ -154,14 +151,14 @@ def test_handler_ingest_exception_increments_errors_and_counts_failed(
 
 
 def test_handler_url_decoding_before_ingest(
-    fake_s3_factory, wire_aws_clients, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
+    fake_s3_factory, fake_s3_store_factory, metrics_spy, exif_stub, event_factory, repo_factory, monkeypatch
 ):
     bucket = "test-bucket"
     encoded_key = "ready/IMG%20123+Sunset.jpg"
     decoded_key = "ready/IMG 123 Sunset.jpg"
 
     fake_s3 = fake_s3_factory({decoded_key: b"bytes"})
-    wire_aws_clients(s3_ingest, s3=fake_s3)
+    s3_ingest._s3_store = fake_s3_store_factory(fake_s3)
     monkeypatch.setattr(s3_ingest, "_repo", repo_factory("success"), raising=True)
     monkeypatch.setattr(s3_ingest, "metrics", metrics_spy, raising=True)
     exif_stub.apply(s3_ingest)
@@ -169,4 +166,5 @@ def test_handler_url_decoding_before_ingest(
     result = s3_ingest.handler(event_factory(bucket, encoded_key), None)
 
     assert result == {"processed": 1, "errors": 0}
-    assert fake_s3.get_object_calls == [(bucket, decoded_key)]
+    # Ensure S3 was called with the decoded key via the underlying fake
+    assert getattr(fake_s3, "get_object_calls", []) == [(bucket, decoded_key)]

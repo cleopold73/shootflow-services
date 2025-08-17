@@ -1,5 +1,7 @@
 # Python
 import io
+import hashlib
+import tempfile
 from typing import Any, Callable, Dict, Optional
 
 import pytest
@@ -25,6 +27,30 @@ class FakeS3:
         return {"Body": StreamingBody(data)}
 
 
+class FakeS3Store:
+    """
+    S3Storage-compatible adapter over FakeS3 for tests that expect the shared S3 interface.
+    """
+    def __init__(self, fake_s3: FakeS3):
+        self._fake_s3 = fake_s3
+
+    def stream_to_temp_and_sha256(self, bucket: str, key: str):
+        resp = self._fake_s3.get_object(Bucket=bucket, Key=key)
+        body = resp["Body"]
+
+        hasher = hashlib.sha256()
+        tmp = tempfile.NamedTemporaryFile(delete=False)
+        tmp_path = tmp.name
+        with tmp as f:
+            while True:
+                chunk = body.read(1024 * 1024)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                f.write(chunk)
+        return hasher.hexdigest(), tmp_path
+
+
 class FakeDDB:
     def __init__(self, behavior: str = "success"):
         """
@@ -32,9 +58,17 @@ class FakeDDB:
           - "success": put_item succeeds
           - "duplicate": put_item raises ConditionalCheckFailedException
           - "error": put_item raises a generic ClientError
+
+        Additional capabilities for repository tests:
+          - query_responses: list of "Items" lists returned per query() call
+          - query_calls: recorded query() kwargs
+          - update_calls: recorded update_item() kwargs
         """
         self.behavior = behavior
         self.put_item_calls: list[tuple[str, Dict[str, Any], str]] = []
+        self.query_calls: list[Dict[str, Any]] = []
+        self.update_calls: list[Dict[str, Any]] = []
+        self.query_responses: list[list[Dict[str, Any]]] = []
 
     def put_item(self, TableName, Item, ConditionExpression):
         from botocore.exceptions import ClientError
@@ -51,6 +85,15 @@ class FakeDDB:
                 error_response={"Error": {"Code": "InternalServerError", "Message": "boom"}},
                 operation_name="PutItem",
             )
+        return {}
+
+    def query(self, **kwargs):
+        self.query_calls.append(kwargs)
+        items = self.query_responses.pop(0) if self.query_responses else []
+        return {"Items": items}
+
+    def update_item(self, **kwargs):
+        self.update_calls.append(kwargs)
         return {}
 
 
@@ -71,6 +114,14 @@ def fake_s3_factory() -> Callable[[Optional[Dict[str, bytes]]], FakeS3]:
 
 
 @pytest.fixture
+def fake_s3_store_factory() -> Callable[[FakeS3], FakeS3Store]:
+    """Factory to wrap a FakeS3 into an S3Storage-compatible FakeS3Store."""
+    def _factory(fake_s3: FakeS3) -> FakeS3Store:
+        return FakeS3Store(fake_s3)
+    return _factory
+
+
+@pytest.fixture
 def fake_ddb_factory() -> Callable[[str], FakeDDB]:
     """Factory to build a FakeDDB with a given behavior."""
     def _factory(behavior: str = "success") -> FakeDDB:
@@ -79,18 +130,29 @@ def fake_ddb_factory() -> Callable[[str], FakeDDB]:
 
 
 @pytest.fixture
-def wire_aws_clients(monkeypatch):
+def wire_aws_clients(monkeypatch, fake_s3_store_factory):
     """
     Returns a function to wire provided fake S3/DDB clients into a module under test.
     Usage:
         wire = wire_aws_clients
         wire(s3_ingest, s3=fake_s3, ddb=fake_ddb)
+
+    If the target module uses a shared S3 storage instance (_s3_store),
+    this will wrap the FakeS3 with FakeS3Store automatically.
     """
     def _wire(module, *, s3=None, ddb=None):
         if s3 is not None:
-            monkeypatch.setattr(module, "_s3", s3, raising=True)
+            if hasattr(module, "_s3_store"):
+                monkeypatch.setattr(module, "_s3_store", fake_s3_store_factory(s3), raising=True)
+            else:
+                # Back-compat for modules that still expose a raw _s3
+                monkeypatch.setattr(module, "_s3", s3, raising=True)
         if ddb is not None:
-            monkeypatch.setattr(module, "_ddb", ddb, raising=True)
+            if hasattr(module, "_repo"):
+                # Some modules encapsulate DDB inside a repository instance; tests usually patch _repo directly.
+                monkeypatch.setattr(module, "_ddb", ddb, raising=False)
+            else:
+                monkeypatch.setattr(module, "_ddb", ddb, raising=True)
     return _wire
 
 
