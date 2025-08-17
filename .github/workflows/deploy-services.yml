@@ -50,7 +50,13 @@ jobs:
 
     # Step 6: Install dependencies using Poetry
     - name: Install dependencies
-      run: poetry install
+      run: poetry install --no-interaction --no-ansi --no-root
+
+    - name: Build wheel
+      run: poetry build -f wheel
+
+    - name: List built artifacts
+      run: ls -la dist
 
     - name: Login to Amazon ECR
       id: login-ecr
