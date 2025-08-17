@@ -11,6 +11,7 @@ env:
   IMAGE_TAG: ${{ github.sha }}
   EXIFTOOL_VERSION: '13.30'  # Single source of truth
   PYTHON_VERSION: '3.10'     # Single source of truth for Python
+  AWS_REGION: us-east-1      # single source of truth for region
 
 permissions:
   id-token: write
@@ -56,7 +57,6 @@ jobs:
     needs: [test]
     runs-on: ubuntu-latest
     outputs:
-      ecr-registry: ${{ steps.login-ecr.outputs.registry }}
       image-digest: ${{ steps.build-image.outputs.digest }}
     steps:
       - name: Checkout repository
@@ -66,7 +66,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::477763023369:role/ShootflowInfraStack-ShootflowEcrPublishRoleD613A83B-ck4os4eAt1k0
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -131,18 +131,28 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - name: Compute immutable IMAGE_URI
+      - name: Configure AWS credentials (for account ID)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::477763023369:role/ShootflowInfraStack-ShootflowEcrPublishRoleD613A83B-ck4os4eAt1k0
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Compute immutable IMAGE_URI from digest
+        id: compute-image-uri
         shell: bash
         run: |
           set -euo pipefail
-          REGISTRY="${{ needs.build.outputs.ecr-registry }}"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGION="${{ env.AWS_REGION }}"
           REPO="${{ env.ECR_REPOSITORY }}"
           DIGEST="${{ needs.build.outputs.image-digest }}"
-          if [[ -z "$REGISTRY" || -z "$DIGEST" ]]; then
-            echo "Registry or digest not available from build job." >&2
+          if [[ -z "$DIGEST" ]]; then
+            echo "Image digest not available from build job." >&2
             exit 1
           fi
-          echo "IMAGE_URI=${REGISTRY}/${REPO}@${DIGEST}" | tee -a "$GITHUB_ENV"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+          IMAGE_URI="${REGISTRY}/${REPO}@${DIGEST}"
+          echo "IMAGE_URI=${IMAGE_URI}" | tee -a "$GITHUB_ENV"
 
       - name: Trigger infra deployment workflow
         uses: peter-evans/repository-dispatch@v3
