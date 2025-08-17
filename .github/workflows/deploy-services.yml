@@ -15,7 +15,35 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install pipx
+        run: |
+          python3 -m pip install --user pipx
+          python3 -m pipx ensurepath
+
+      - name: Install Poetry
+        run: |
+          pipx install poetry==1.8.4
+
+      - name: Install dependencies (with dev)
+        run: poetry install --no-interaction --no-ansi
+
+      - name: Run unit tests
+        run: |
+          pytest -q
+
   build:
+    needs: [test]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
