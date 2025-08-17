@@ -31,7 +31,7 @@ class FlickrAPIClient:
       }
     """
 
-    def __init__(self, *, store_token: bool = True) -> None:
+    def __init__(self, *, store_token: bool = False) -> None:
         secret_name = settings.FLICKR_SECRET_NAME
         if not secret_name:
             raise RuntimeError("FLICKR_SECRET_NAME is not configured in settings.toml")
