@@ -72,25 +72,21 @@ class FlickrAPIClient:
         # Configure the library keys
         flickr_api.set_keys(api_key=api_key, api_secret=api_secret)
 
-        # Always construct AuthHandler and set access token via set_access_token (creates proper OAuthToken object)
         auth = flickr_api.auth.AuthHandler()
-        if hasattr(auth, "set_access_token") and callable(getattr(auth, "set_access_token")):
-            auth.set_access_token(oauth_token, oauth_token_secret)
+
+        TokenCls = getattr(flickr_api.auth, "OAuthToken", None)
+
+        if TokenCls is not None:
+            token_obj = TokenCls(oauth_token, oauth_token_secret)
         else:
-            # Fallback for odd versions without set_access_token: ensure access_token has key/secret attrs
-            TokenCls = getattr(flickr_api.auth, "OAuthToken", None)
+            # Minimal shim with the required attributes
+            class _Tok:
+                def __init__(self, key, secret):
+                    self.key = key
+                    self.secret = secret
+            token_obj = _Tok(oauth_token, oauth_token_secret)
 
-            if TokenCls is not None:
-                token_obj = TokenCls(oauth_token, oauth_token_secret)
-            else:
-                # Minimal shim with the required attributes
-                class _Tok:
-                    def __init__(self, key, secret):
-                        self.key = key
-                        self.secret = secret
-                token_obj = _Tok(oauth_token, oauth_token_secret)
-
-            setattr(auth, "access_token", token_obj)
+        setattr(auth, "access_token", token_obj)
 
         # Optional: store user metadata on the handler if provided (not required for auth)
         if user_nsid:
