@@ -293,6 +293,8 @@ class FlickrAPIClient:
         if tag_str:
             kwargs["tags"] = tag_str
 
+        logger.info(f"Tags {tag_str}")
+
         # Preserve "0" by sending string flags and only omitting when None.
         flag = self._to_flag(is_public)
         if flag is not None:
