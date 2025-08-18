@@ -4,12 +4,12 @@
 AWS_REGION = "us-east-1"
 DDB_TABLE = "shootflow-db"
 S3_BUCKET = "bucket"
+LOG_LEVEL = "INFO"
 
 FLICKR_SECRET_NAME = "FLICKR-API"
 FLICKR_UPLOAD_TIMEOUT_SECONDS = 120
 FLICKR_UPLOAD_MAX_RETRIES = 1
 FLICKR_UPLOAD_BACKOFF_SECONDS = 2.0
-
 
 EXIF_BLOCKLIST = ["canon", "nikon", "sony", "fujifilm", "fuji", "lumix", "panasonic", "olympus", "leica", "pentax", "ricoh", "hasselblad", "phaseone", "sigma", "tamron", "tokina", "zeiss", "voigtlander", "dji", "gopro", "rf", "ef", "e-mount", "fe", "zf", "z-mount", "m-mount", "x-mount", "f-mount", "mft", "micro four thirds", "four thirds", "nikkor", "dslr", "mirrorless", "full frame", "aps-c", "crop sensor"]
 EXIF_MAX_TEXT_LENGTH = 20000
@@ -30,7 +30,3 @@ S3_BUCKET = "shootflowupload"
 [production]
 # Production-specific overrides (if any)
 DDB_TABLE = "shootflow-db"
-
-[exif]
-
-

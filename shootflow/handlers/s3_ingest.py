@@ -1,16 +1,14 @@
 # Python
-import hashlib
 import json
 import os
 import sys
-import tempfile
 import time
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple
 
 from shootflow.shared.config import settings
 from shootflow.shared.metrics import metrics
+from shootflow.shared.logger import setup_basic_logging
 from shootflow.shared.exif import run_exiftool_json, parse_exif_fields
 from shootflow.shared.ddb_repo import PhotoRepository
 from shootflow.shared.s3 import S3Storage
@@ -108,6 +106,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     event shape. We process each S3 record independently and return a simple
     summary. Partial-batch retry semantics are handled by the router, not here.
     """
+    setup_basic_logging()
     s3_records = event.get("Records", []) or []
     logger.info(f"s3_ingest_start s3_records={len(s3_records)}")
 

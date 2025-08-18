@@ -2,6 +2,8 @@
 import io
 import hashlib
 import tempfile
+import json
+import types
 from typing import Any, Callable, Dict, Optional
 
 import pytest
@@ -273,3 +275,131 @@ def fake_repo(repo_factory) -> FakeRepo:
     behavior can use repo_factory to construct their own and monkeypatch it.
     """
     return repo_factory("success")
+
+
+# ----------------- New Flickr test doubles and fixtures -----------------
+
+class FakeSecretsManager:
+    def __init__(self, payload: dict):
+        self.payload = payload
+        self.calls: list[str] = []
+
+    def get_secret_value(self, *, SecretId):
+        self.calls.append(SecretId)
+        return {"SecretString": json.dumps(self.payload)}
+
+
+class FakeBoto3SecretsOnly:
+    """
+    Minimal boto3 shim that only returns a Secrets Manager client.
+    """
+    def __init__(self, sm: FakeSecretsManager):
+        self._sm = sm
+
+    def client(self, name, region_name=None):
+        if name != "secretsmanager":
+            raise AssertionError(f"Unexpected boto3 client requested in Flickr tests: {name}")
+        return self._sm
+
+
+class FakeFlickrAPI:
+    """
+    Minimal flickr_api shim for tests:
+      - set_keys, set_timeout, set_auth_handler are recorded
+      - upload() records calls and can return side effects
+      - test.login returns a stable value
+      - auth includes AuthHandler and OAuthToken classes
+    """
+    def __init__(self):
+        self.keys = None
+        self.timeout = None
+        self.auth_handler = None
+        self.upload_calls = []
+        self._upload_side_effects = []
+        self.test = types.SimpleNamespace(login=lambda: {"user": {"username": {"_content": "testuser"}}})
+
+        class _AuthHandler:
+            def __init__(self):
+                self.access_token = None
+                self.user_nsid = None
+                self.username = None
+
+        class _OAuthToken:
+            def __init__(self, key, secret):
+                self.key = key
+                self.secret = secret
+
+        self.auth = types.SimpleNamespace(AuthHandler=_AuthHandler, OAuthToken=_OAuthToken)
+
+    def set_keys(self, *, api_key, api_secret):
+        self.keys = (api_key, api_secret)
+
+    def set_timeout(self, timeout_seconds):
+        self.timeout = timeout_seconds
+
+    def set_auth_handler(self, handler):
+        self.auth_handler = handler
+
+    def upload(self, **kwargs):
+        self.upload_calls.append(kwargs)
+        if self._upload_side_effects:
+            eff = self._upload_side_effects.pop(0)
+            if isinstance(eff, BaseException):
+                raise eff
+            return eff
+        # Default object with .id to mimic flickr_api upload return
+        return types.SimpleNamespace(id="999")
+
+
+class ReadTimeoutFake(Exception):
+    pass
+
+
+class ConnectionErrorFake(Exception):
+    pass
+
+
+@pytest.fixture
+def flickr_test_env(monkeypatch):
+    """
+    Patches shootflow.shared.flickr module to use:
+      - FakeSecretsManager via a minimal boto3 shim (secrets only)
+      - FakeFlickrAPI as the flickr_api module
+      - requests.exceptions mapped to local fake classes for retry testing
+
+    Returns a dict with handles to the fakes for assertions and control:
+      {"fake_api": FakeFlickrAPI, "fake_sm": FakeSecretsManager}
+    """
+    import shootflow.shared.flickr as flickr_mod
+    from shootflow.shared.config import settings
+
+    # Stable, fast tunables
+    settings.AWS_REGION = "us-east-1"
+    settings.FLICKR_SECRET_NAME = "FAKE-SECRET"
+    settings.FLICKR_UPLOAD_TIMEOUT_SECONDS = 5
+    settings.FLICKR_UPLOAD_MAX_RETRIES = 3
+    settings.FLICKR_UPLOAD_BACKOFF_SECONDS = 0.0
+
+    # Secrets payload used by FlickrAPIClient __init__
+    secret = {
+        "api_key": "k",
+        "api_secret": "s",
+        "oauth_token": "tok",
+        "oauth_token_secret": "toksec",
+        "user_nsid": "123@N00",
+        "username": "demo",
+    }
+    fake_sm = FakeSecretsManager(secret)
+    fake_boto3 = FakeBoto3SecretsOnly(fake_sm)
+    monkeypatch.setattr(flickr_mod, "boto3", fake_boto3, raising=True)
+
+    fake_api = FakeFlickrAPI()
+    monkeypatch.setattr(flickr_mod, "flickr_api", fake_api, raising=True)
+
+    # Shim for requests exceptions used for retry detection
+    req_shim = types.SimpleNamespace(
+        exceptions=types.SimpleNamespace(ReadTimeout=ReadTimeoutFake, ConnectionError=ConnectionErrorFake)
+    )
+    monkeypatch.setattr(flickr_mod, "requests", req_shim, raising=True)
+
+    return {"fake_api": fake_api, "fake_sm": fake_sm, "ReadTimeout": ReadTimeoutFake, "ConnectionError": ConnectionErrorFake}
