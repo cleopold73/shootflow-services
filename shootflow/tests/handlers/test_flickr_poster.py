@@ -133,8 +133,9 @@ def test_missing_bucket_counts_failed(fake_ddb_factory, metrics_spy, monkeypatch
     monkeypatch.setattr(flickr_poster, "_repo", repo, raising=True)
     monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
 
-    got = flickr_poster.handler({}, None)
-    assert got == {"posted": 0, "errors": 1}
+    with pytest.raises(RuntimeError):
+        flickr_poster.handler({}, None)
+
     assert ("FlickrPostFailed", 1.0) in metrics_spy.calls
     # No update if bucket missing
     assert getattr(fake_ddb, "update_calls", []) == []
@@ -156,8 +157,9 @@ def test_s3_download_failure_counts_failed(fake_s3_factory, fake_ddb_factory, me
     monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: _FakeFlickrOK(), raising=True)
     monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
 
-    got = flickr_poster.handler({}, None)
-    assert got == {"posted": 0, "errors": 1}
+    with pytest.raises(RuntimeError):
+        flickr_poster.handler({}, None)
+
     assert ("FlickrPostFailed", 1.0) in metrics_spy.calls
     assert getattr(fake_ddb, "update_calls", []) == []
 
@@ -179,7 +181,8 @@ def test_upload_failure_counts_failed_and_no_mark_posted(
     monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: _FakeFlickrBoom(), raising=True)
     monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
 
-    got = flickr_poster.handler({}, None)
-    assert got == {"posted": 0, "errors": 1}
+    with pytest.raises(RuntimeError):
+        flickr_poster.handler({}, None)
+
     assert ("FlickrPostFailed", 1.0) in metrics_spy.calls
     assert getattr(fake_ddb, "update_calls", []) == []
