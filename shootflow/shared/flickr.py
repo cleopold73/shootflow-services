@@ -117,18 +117,7 @@ class FlickrAPIClient:
                 pass
 
         flickr_api.set_auth_handler(auth)
-
-        # Ensure flickr_api.upload uses a sufficiently large timeout
-        # flickr_api.upload.post(...) calls requests.post(..., timeout=get_timeout())
-        # We override get_timeout to return our configured value.
-        try:
-            import flickr_api.upload as _fup  # type: ignore
-            def _client_timeout_override():
-                return self._upload_timeout_s
-            _fup.get_timeout = _client_timeout_override  # type: ignore[attr-defined]
-            logger.debug(f"Flickr upload timeout patched to {self._upload_timeout_s}s")
-        except Exception:
-            logger.warning("Could not patch flickr_api upload timeout; uploads may still time out.", exc_info=True)
+        flickr_api.set_timeout(self._upload_timeout_s)
 
     @staticmethod
     def _tags_to_string(tags: Optional[Iterable[str]]) -> Optional[str]:

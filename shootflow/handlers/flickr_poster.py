@@ -59,7 +59,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     except Exception as e:
         metrics.count("FlickrPostFailed", 1.0)
         logger.exception(f"flickr_post_failed item={item} error={e}")
-        return {"posted": 0, "errors": 1}
+        raise
 
 
 if __name__ == "__main__":
