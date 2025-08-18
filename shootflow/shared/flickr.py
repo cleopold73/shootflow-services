@@ -121,9 +121,54 @@ class FlickrAPIClient:
 
     @staticmethod
     def _tags_to_string(tags: Optional[Iterable[str]]) -> Optional[str]:
+        """
+        Convert an iterable of tag strings into Flickr's expected space-delimited format.
+        - Commas are NOT separators in Flickr; we split incoming comma-separated entries to be safe.
+        - Multi-word tags must be quoted.
+        - Double quotes inside a tag are escaped as \"
+        - Empty items are dropped, duplicates are removed (order-preserving).
+        """
         if not tags:
             return None
-        return " ".join(t for t in tags if t)
+
+        normalized: list[str] = []
+
+        def _emit(tag: str) -> None:
+            t = str(tag).strip()
+            if not t:
+                return
+            # Escape embedded quotes
+            t = t.replace('"', '\\"')
+            # Quote multi-word tags
+            if any(ch.isspace() for ch in t):
+                t = f'"{t}"'
+            normalized.append(t)
+
+        for raw in tags:
+            if raw is None:
+                continue
+            s = str(raw).strip()
+            if not s:
+                continue
+            # Normalize accidental comma-separated inputs into separate tags
+            if "," in s:
+                for part in (p.strip() for p in s.split(",")):
+                    if part:
+                        _emit(part)
+            else:
+                _emit(s)
+
+        if not normalized:
+            return None
+
+        # Deduplicate while preserving order
+        deduped = list(dict.fromkeys(normalized))
+
+        # Optional: cap to a reasonable upper bound
+        MAX_TAGS = 75
+        deduped = deduped[:MAX_TAGS]
+
+        return " ".join(deduped)
 
     @staticmethod
     def _extract_photo_id(upload_resp) -> str:
@@ -205,10 +250,14 @@ class FlickrAPIClient:
                         )
                         time.sleep(sleep_s)
                         continue
-                # Non-retryable or retries exhausted
+                    # Final attempt failed: break and raise a clear error below
+                    break
+                # Non-retryable error: re-raise immediately
                 raise
-        # If we exit loop without returning, re-raise a clearer error
-        raise RuntimeError(f"Flickr upload failed after {self._upload_max_retries} attempts: {last_exc}") from last_exc
+        # If we exit loop without returning, retries were exhausted
+        raise RuntimeError(
+            f"Flickr upload failed after {self._upload_max_retries} attempts: {last_exc}"
+        ) from last_exc
 
     def upload_file(
         self,
