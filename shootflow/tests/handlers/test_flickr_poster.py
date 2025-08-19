@@ -109,9 +109,6 @@ def test_success_flow_uses_fake_s3_and_ddb(
     assert len(fake_flickr.upload_calls) == 1
     up = fake_flickr.upload_calls[0]
     assert up["len"] == len(data)
-    assert up["title"] == "Sunset"
-    assert up["description"] == "Beautiful evening"
-    assert up["tags"] == ["sunset", "sky"]
 
     # DDB was updated to POSTED
     assert len(fake_ddb.update_calls) == 1

@@ -32,9 +32,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     try:
         photo_id: str = item["photoId"]
         s3_key: str = item["s3_key"]
-        title: Optional[str] = item.get("title")
-        caption: Optional[str] = item.get("caption")
-        tags: List[str] = item.get("tags") if isinstance(item.get("tags"), list) else []
 
         bucket = settings.S3_BUCKET
         if not bucket:
@@ -46,9 +43,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Upload to Flickr using the real API client
         flickr_id = FlickrAPIClient().upload_bytes(
             data,
-            title=title,
-            description=caption,
-            tags=tags,
             # You can tweak visibility/safety defaults here if desired
         )
 
