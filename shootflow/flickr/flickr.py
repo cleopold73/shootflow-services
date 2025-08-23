@@ -495,9 +495,10 @@ class FlickrAPIClient:
     def add_photo_to_group(self, photo_id: str, group_id: str) -> None:
         """
         Add an existing photo to a Flickr group pool (flickr.groups.pools.add).
+        Best-effort: logs failures (including photo_id and group_id) instead of raising,
+        and treats 'Pending Queue' moderation responses as success.
         Raises:
             ValueError: if inputs are missing
-            RuntimeError: if the Flickr API call fails
         """
         if not photo_id or not group_id:
             raise ValueError("photo_id and group_id are required")
@@ -519,4 +520,10 @@ class FlickrAPIClient:
                     msg,
                 )
                 return
-            raise RuntimeError(f"Failed to add photo_id={photo_id} to group_id={group_id}: {e}")
+            logger.warning(
+                "add_photo_to_group_failed photo_id=%s group_id=%s error=%s",
+                photo_id,
+                group_id,
+                msg,
+            )
+            return

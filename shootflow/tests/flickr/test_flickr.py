@@ -227,37 +227,6 @@ def test_add_photo_to_group_success(flickr_test_env, monkeypatch):
     assert calls == [("p123", "g999")]
 
 
-def test_add_photo_to_group_invalid_args(flickr_test_env):
-    c = FlickrAPIClient()
-    with pytest.raises(ValueError):
-        c.add_photo_to_group("", "g1")
-    with pytest.raises(ValueError):
-        c.add_photo_to_group("p1", "")
-
-
-def test_add_photo_to_group_failure_raises(flickr_test_env, monkeypatch):
-    import sys
-    import types
-
-    class _Group:
-        def __init__(self, id):
-            self.id = id
-
-        def addPhoto(self, *, photo_id):
-            # Simulate a generic failure from the API
-            raise Exception("boom")
-
-    # Inject our stub into the import system
-    objects_mod = types.ModuleType("flickr_api.objects")
-    objects_mod.Group = _Group  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "flickr_api.objects", objects_mod)
-
-    c = FlickrAPIClient()
-    with pytest.raises(RuntimeError) as ei:
-        c.add_photo_to_group("p2", "g2")
-    assert "Failed to add photo_id" in str(ei.value)
-
-
 def test_add_photo_to_group_pending_queue_treated_as_success(flickr_test_env, monkeypatch):
     import sys
     import types
@@ -277,4 +246,34 @@ def test_add_photo_to_group_pending_queue_treated_as_success(flickr_test_env, mo
 
     c = FlickrAPIClient()
     # Should be treated as success (no exception raised)
+    c.add_photo_to_group("p2", "g2")
+
+
+def test_add_photo_to_group_invalid_args(flickr_test_env):
+    c = FlickrAPIClient()
+    with pytest.raises(ValueError):
+        c.add_photo_to_group("", "g1")
+    with pytest.raises(ValueError):
+        c.add_photo_to_group("p1", "")
+
+
+def test_add_photo_to_group_failure_logs_no_raise(flickr_test_env, monkeypatch):
+    import sys
+    import types
+
+    class _Group:
+        def __init__(self, id):
+            self.id = id
+
+        def addPhoto(self, *, photo_id):
+            # Simulate a generic failure from the API
+            raise Exception("boom")
+
+    # Inject our stub into the import system
+    objects_mod = types.ModuleType("flickr_api.objects")
+    objects_mod.Group = _Group  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "flickr_api.objects", objects_mod)
+
+    c = FlickrAPIClient()
+    # Should not raise; failure is logged and swallowed
     c.add_photo_to_group("p2", "g2")
