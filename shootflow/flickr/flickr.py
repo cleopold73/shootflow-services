@@ -509,4 +509,14 @@ class FlickrAPIClient:
         try:
             Group(id=group_id).addPhoto(photo_id=photo_id)
         except Exception as e:
+            # Treat "Pending Queue" as success (group moderation queue)
+            msg = str(e)
+            if "pending queue" in msg.lower():
+                logger.info(
+                    "add_photo_to_group: treated as success (pending queue). photo_id=%s group_id=%s detail=%s",
+                    photo_id,
+                    group_id,
+                    msg,
+                )
+                return
             raise RuntimeError(f"Failed to add photo_id={photo_id} to group_id={group_id}: {e}")

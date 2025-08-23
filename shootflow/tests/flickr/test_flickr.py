@@ -235,11 +235,46 @@ def test_add_photo_to_group_invalid_args(flickr_test_env):
         c.add_photo_to_group("p1", "")
 
 
-def test_add_photo_to_group_failure_raises(flickr_test_env):
-    raw = flickr_test_env["raw_flickr"]
-    raw.side_effect = Exception("boom")
+def test_add_photo_to_group_failure_raises(flickr_test_env, monkeypatch):
+    import sys
+    import types
+
+    class _Group:
+        def __init__(self, id):
+            self.id = id
+
+        def addPhoto(self, *, photo_id):
+            # Simulate a generic failure from the API
+            raise Exception("boom")
+
+    # Inject our stub into the import system
+    objects_mod = types.ModuleType("flickr_api.objects")
+    objects_mod.Group = _Group  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "flickr_api.objects", objects_mod)
 
     c = FlickrAPIClient()
     with pytest.raises(RuntimeError) as ei:
         c.add_photo_to_group("p2", "g2")
     assert "Failed to add photo_id" in str(ei.value)
+
+
+def test_add_photo_to_group_pending_queue_treated_as_success(flickr_test_env, monkeypatch):
+    import sys
+    import types
+
+    class _Group:
+        def __init__(self, id):
+            self.id = id
+
+        def addPhoto(self, *, photo_id):
+            # Simulate Flickr's moderation queue message
+            raise Exception("6 : Your Photo has been added to the Pending Queue for this Pool")
+
+    # Inject our stub into the import system
+    objects_mod = types.ModuleType("flickr_api.objects")
+    objects_mod.Group = _Group  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "flickr_api.objects", objects_mod)
+
+    c = FlickrAPIClient()
+    # Should be treated as success (no exception raised)
+    c.add_photo_to_group("p2", "g2")
