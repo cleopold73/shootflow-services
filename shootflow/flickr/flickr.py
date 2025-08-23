@@ -329,8 +329,6 @@ class FlickrAPIClient:
         if tag_str:
             kwargs["tags"] = tag_str
 
-        logger.info(f"Tags {tag_str}")
-
         # Preserve "0" by sending string flags and only omitting when None.
         flag = self._to_flag(is_public)
         if flag is not None:
@@ -504,12 +502,11 @@ class FlickrAPIClient:
         if not photo_id or not group_id:
             raise ValueError("photo_id and group_id are required")
         try:
-            from flickr_api.api import flickr as raw_flickr  # type: ignore
+            from flickr_api.objects import Group  # type: ignore
         except Exception as e:
             logger.warning("Unable to import flickr_api.api.flickr: %s", e, exc_info=False)
             raise
         try:
-            # Flickr method binding: flickr.groups.pools.add -> groups_pools_add
-            raw_flickr.groups_pools_add(photo_id=photo_id, group_id=group_id)
+            Group(id=group_id).addPhoto(photo_id=photo_id)
         except Exception as e:
             raise RuntimeError(f"Failed to add photo_id={photo_id} to group_id={group_id}: {e}")

@@ -33,6 +33,7 @@ def setup_basic_logging(level: int | None = None) -> None:
     # Optionally quiet common noisy libraries (tune as needed)
     logging.getLogger("boto3").setLevel(logging.WARNING)
     logging.getLogger("botocore").setLevel(logging.WARNING)
+    logging.getLogger("flickr_api").setLevel(logging.WARNING)
 
 
 # Usage:

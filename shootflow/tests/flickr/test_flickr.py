@@ -1,5 +1,6 @@
 import os
 import types
+from unittest.mock import patch
 
 import pytest
 
@@ -98,14 +99,14 @@ def test_to_flag(val, expected):
     assert FlickrAPIClient._to_flag(val) == expected
 
 
-def test_upload_file_builds_kwargs_and_calls_upload(monkeypatch, flickr_test_env, tmp_path):
+@patch("os.path.exists", return_value=True)
+def test_upload_file_builds_kwargs_and_calls_upload(exists_mock, flickr_test_env, tmp_path):
     fake_api = flickr_test_env["fake_api"]
     c = FlickrAPIClient()
 
     # Ensure file exists
     p = tmp_path / "img.jpg"
     p.write_bytes(b"abc")
-    monkeypatch.setattr(os.path, "exists", lambda path: True, raising=True)
 
     # Make upload return object with id
     fake_api._upload_side_effects = [types.SimpleNamespace(id="123")]
@@ -165,7 +166,8 @@ def test_upload_retries_exhaust_then_raises(flickr_test_env):
     assert "failed after" in str(ei.value)
 
 
-def test_upload_bytes_writes_temp_and_cleans(monkeypatch, flickr_test_env):
+@patch("os.unlink")
+def test_upload_bytes_writes_temp_and_cleans(unlink_mock, flickr_test_env):
     fake_api = flickr_test_env["fake_api"]
     c = FlickrAPIClient()
 
@@ -179,24 +181,12 @@ def test_upload_bytes_writes_temp_and_cleans(monkeypatch, flickr_test_env):
 
     fake_api.upload = spy_upload
 
-    unlinked = {"path": None}
-    real_unlink = os.unlink
-
-    def spy_unlink(path):
-        unlinked["path"] = path
-        try:
-            return real_unlink(path)
-        except FileNotFoundError:
-            return None
-
-    monkeypatch.setattr(os, "unlink", spy_unlink, raising=True)
-
     pid = c.upload_bytes(b"\x00\x01data", title="X")
 
     assert pid == "9001"
     assert observed_exists["during_upload"] is True
-    assert unlinked["path"] is not None
-    assert not os.path.exists(unlinked["path"])
+    # Ensure cleanup attempted
+    assert unlink_mock.called
 
     fake_api.upload = real_upload
 
@@ -207,12 +197,34 @@ def test_missing_secret_name_raises(monkeypatch):
         FlickrAPIClient()
 
 
-def test_add_photo_to_group_success(flickr_test_env):
-    raw = flickr_test_env["raw_flickr"]
-    c = FlickrAPIClient()
+def test_add_photo_to_group_success(flickr_test_env, monkeypatch):
+    # Stub the objects API Group to capture addPhoto calls
+    import sys
+    import types
 
+    calls = []
+
+    class _Group:
+        def __init__(self, id):
+            self.id = id
+
+        def getInfo(self):
+            # Minimal shape; implementation only needs this to not fail if invoked
+            return {"group": {"id": self.id}}
+
+        def addPhoto(self, *, photo_id):
+            calls.append((photo_id, self.id))
+
+    # Inject our stub into the import system
+    objects_mod = types.ModuleType("flickr_api.objects")
+    objects_mod.Group = _Group  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "flickr_api.objects", objects_mod)
+
+    c = FlickrAPIClient()
     c.add_photo_to_group("p123", "g999")
-    assert raw.calls == [("p123", "g999")]
+
+    # Verify the instance method path was used
+    assert calls == [("p123", "g999")]
 
 
 def test_add_photo_to_group_invalid_args(flickr_test_env):

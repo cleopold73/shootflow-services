@@ -3,27 +3,33 @@
 import base64
 import types
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def patch_exif_tunables(monkeypatch):
+def patch_exif_tunables():
     # Import the module under test
     import shootflow.shared.exif as exif
 
-    # Ensure tunables do not depend on external config for tests
-    monkeypatch.setattr(exif, "EXIF_MAX_TEXT_LENGTH", 20000, raising=False)
-    monkeypatch.setattr(exif, "EXIF_BASE64_SNIFF_PREFIX_LEN", 16, raising=False)
-    monkeypatch.setattr(exif, "EXIF_LARGE_COLLECTION_SIZE", 10, raising=False)
+    # Patch constants via patchers and yield, then stop
+    patchers = [
+        patch.object(exif, "EXIF_MAX_TEXT_LENGTH", 20000),
+        patch.object(exif, "EXIF_BASE64_SNIFF_PREFIX_LEN", 16),
+        patch.object(exif, "EXIF_LARGE_COLLECTION_SIZE", 10),
+        patch.object(exif, "GEAR_TAG_BLOCKLIST", {"canon", "nikkor"}),
+    ]
+    for p in patchers:
+        p.start()
+    try:
+        yield exif
+    finally:
+        for p in reversed(patchers):
+            p.stop()
 
-    # Use a small, known blocklist for predictable assertions (can extend per test)
-    monkeypatch.setattr(exif, "GEAR_TAG_BLOCKLIST", {"canon", "nikkor"}, raising=False)
 
-    return exif
-
-
-def test_run_exiftool_json_maps_fields(monkeypatch, patch_exif_tunables, tmp_path):
+def test_run_exiftool_json_maps_fields(patch_exif_tunables, tmp_path):
     exif = patch_exif_tunables
 
     # Mock pyexiftool.ExifTool context manager used by run_exiftool_json
@@ -52,29 +58,28 @@ def test_run_exiftool_json_maps_fields(monkeypatch, patch_exif_tunables, tmp_pat
                 "EXIF:GPSAltitude": 15.5,
             }]
 
-    monkeypatch.setattr(exif, "exiftool", types.SimpleNamespace(ExifTool=FakeET), raising=True)
+    with patch.object(exif, "exiftool", types.SimpleNamespace(ExifTool=FakeET)):
+        # Create a fake file path (not used by the fake, but needed by our function)
+        fake_file = tmp_path / "photo.jpg"
+        fake_file.write_bytes(b"not-used")
 
-    # Create a fake file path (not used by the fake, but needed by our function)
-    fake_file = tmp_path / "photo.jpg"
-    fake_file.write_bytes(b"not-used")
-
-    out = exif.run_exiftool_json(str(fake_file))
-    assert out is not None
-    # Key presence and mapped values (flattened)
-    assert out["XMP-dc:Title"] == "My Title"
-    assert out["XMP-dc:Description"] == "Desc"
-    assert out["XMP-dc:Subject"] == ["landscape", "Canon", "sunset"]
-    assert out["IPTC:ObjectName"] == "IPTC Title"
-    assert out["IPTC:Keywords"] == ["alpha", "beta"]
-    assert out["EXIF:ImageDescription"] == "EXIF Desc"
-    assert out["EXIF:UserComment"] == "User Comment"
-    # GPS numeric (decimal degrees with -n)
-    assert pytest.approx(out["EXIF:GPSLatitude"], rel=1e-6) == 37 + 46 / 60 + 30 / 3600
-    assert pytest.approx(out["EXIF:GPSLongitude"], rel=1e-6) == -122 - 25 / 60
-    assert out["EXIF:GPSAltitude"] == 15.5
+        out = exif.run_exiftool_json(str(fake_file))
+        assert out is not None
+        # Key presence and mapped values (flattened)
+        assert out["XMP-dc:Title"] == "My Title"
+        assert out["XMP-dc:Description"] == "Desc"
+        assert out["XMP-dc:Subject"] == ["landscape", "Canon", "sunset"]
+        assert out["IPTC:ObjectName"] == "IPTC Title"
+        assert out["IPTC:Keywords"] == ["alpha", "beta"]
+        assert out["EXIF:ImageDescription"] == "EXIF Desc"
+        assert out["EXIF:UserComment"] == "User Comment"
+        # GPS numeric (decimal degrees with -n)
+        assert pytest.approx(out["EXIF:GPSLatitude"], rel=1e-6) == 37 + 46 / 60 + 30 / 3600
+        assert pytest.approx(out["EXIF:GPSLongitude"], rel=1e-6) == -122 - 25 / 60
+        assert out["EXIF:GPSAltitude"] == 15.5
 
 
-def test_parse_exif_fields_basic_and_blocklist(monkeypatch, patch_exif_tunables):
+def test_parse_exif_fields_basic_and_blocklist(patch_exif_tunables):
     exif = patch_exif_tunables
 
     meta = {
@@ -125,7 +130,7 @@ def test_parse_exif_fields_gps_conversion(patch_exif_tunables):
     assert pytest.approx(gps["alt"], rel=1e-6) == 15.5
 
 
-def test_parse_exif_fields_filters_large_and_base64_fields(monkeypatch, patch_exif_tunables):
+def test_parse_exif_fields_filters_large_and_base64_fields(patch_exif_tunables):
     exif = patch_exif_tunables
 
     # A very long plain string
@@ -156,7 +161,7 @@ def test_parse_exif_fields_filters_large_and_base64_fields(monkeypatch, patch_ex
     assert "GiantList" not in exif_kept
 
 
-def test_capital_jpg_exif_parsing(monkeypatch):
+def test_capital_jpg_exif_parsing():
     # Locate sample
     img_path = Path(__file__).parent / "data" / "Capital.jpg"
     if not img_path.exists():
@@ -166,53 +171,50 @@ def test_capital_jpg_exif_parsing(monkeypatch):
     import shootflow.shared.exif as exif
 
     # Ensure tunables are deterministic for the test
-    monkeypatch.setattr(exif, "EXIF_MAX_TEXT_LENGTH", 20000, raising=False)
-    monkeypatch.setattr(exif, "EXIF_BASE64_SNIFF_PREFIX_LEN", 32, raising=False)
-    monkeypatch.setattr(exif, "EXIF_LARGE_COLLECTION_SIZE", 2000, raising=False)
+    with patch.object(exif, "EXIF_MAX_TEXT_LENGTH", 20000), \
+         patch.object(exif, "EXIF_BASE64_SNIFF_PREFIX_LEN", 32), \
+         patch.object(exif, "EXIF_LARGE_COLLECTION_SIZE", 2000), \
+         patch.object(exif, "GEAR_TAG_BLOCKLIST", {"canon", "nikon", "nikkor", "sony"}):
+        # 1) Raw read via exiftool wrapper
+        out = exif.run_exiftool_json(str(img_path))
+        assert out is not None, "Failed to read metadata from Capital.jpg"
+        assert isinstance(out, dict)
+        # At least some metadata keys should be present
+        assert len(out) > 0
 
-    # Make blocklist predictable, but don't overconstrain (real image may not include these)
-    monkeypatch.setattr(exif, "GEAR_TAG_BLOCKLIST", {"canon", "nikon", "nikkor", "sony"}, raising=False)
+        # 2) Normalize via parse_exif_fields
+        title, caption, tags, extras = exif.parse_exif_fields(out, fallback_title=img_path.stem)
 
-    # 1) Raw read via exiftool wrapper
-    out = exif.run_exiftool_json(str(img_path))
-    assert out is not None, "Failed to read metadata from Capital.jpg"
-    assert isinstance(out, dict)
-    # At least some metadata keys should be present
-    assert len(out) > 0
+        # Basic type checks
+        assert title is None or isinstance(title, str)
+        assert caption is None or isinstance(caption, str)
+        assert isinstance(tags, list)
+        assert isinstance(extras, dict)
+        assert "exif" in extras and isinstance(extras["exif"], dict)
+        assert title == "Quiet Morning at the Capitol"
 
-    # 2) Normalize via parse_exif_fields
-    title, caption, tags, extras = exif.parse_exif_fields(out, fallback_title=img_path.stem)
+        # Tags normalization: lowercase, trimmed, deduped
+        assert all(isinstance(t, str) for t in tags)
+        assert all(t == t.strip() for t in tags)
+        assert all(t == t.lower() for t in tags)
+        assert len(tags) == len(set(tags))  # deduped
 
-    # Basic type checks
-    assert title is None or isinstance(title, str)
-    assert caption is None or isinstance(caption, str)
-    assert isinstance(tags, list)
-    assert isinstance(extras, dict)
-    assert "exif" in extras and isinstance(extras["exif"], dict)
-    assert title == "Quiet Morning at the Capitol"
+        # Blocklist applied: no tag should contain blocked terms as substrings
+        for t in tags:
+            assert not any(bad in t for bad in exif.GEAR_TAG_BLOCKLIST)
 
-    # Tags normalization: lowercase, trimmed, deduped
-    assert all(isinstance(t, str) for t in tags)
-    assert all(t == t.strip() for t in tags)
-    assert all(t == t.lower() for t in tags)
-    assert len(tags) == len(set(tags))  # deduped
+        # GPS (if present) must be numeric floats
+        gps = extras.get("gps")
+        if gps is not None:
+            assert isinstance(gps, dict)
+            assert "lat" in gps and "lon" in gps
+            assert isinstance(gps["lat"], float)
+            assert isinstance(gps["lon"], float)
+            # Optional altitude
+            if "alt" in gps:
+                assert isinstance(gps["alt"], float)
 
-    # Blocklist applied: no tag should contain blocked terms as substrings
-    for t in tags:
-        assert not any(bad in t for bad in exif.GEAR_TAG_BLOCKLIST)
-
-    # GPS (if present) must be numeric floats
-    gps = extras.get("gps")
-    if gps is not None:
-        assert isinstance(gps, dict)
-        assert "lat" in gps and "lon" in gps
-        assert isinstance(gps["lat"], float)
-        assert isinstance(gps["lon"], float)
-        # Optional altitude
-        if "alt" in gps:
-            assert isinstance(gps["alt"], float)
-
-    # Ensure large/binary-like fields are filtered in "exif" (can't assert exact keys,
-    # but can assert original 'out' size is at least as big as kept subset)
-    exif_kept = extras["exif"]
-    assert isinstance(exif_kept, dict)
+        # Ensure large/binary-like fields are filtered in "exif" (can't assert exact keys,
+        # but can assert original 'out' size is at least as big as kept subset)
+        exif_kept = extras["exif"]
+        assert isinstance(exif_kept, dict)

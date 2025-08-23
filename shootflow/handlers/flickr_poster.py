@@ -40,7 +40,11 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if settings.FLICKR_GROUPS_DRY_RUN_ENABLED:
             groups: List[str] = []
             try:
-                if settings.FLICKR_GROUPS_VIA_LLM_ENABLED:
+                static_ids = settings.FLICKR_STATIC_GROUP_IDS
+                if static_ids:
+                    groups = [str(g).strip() for g in static_ids if str(g).strip()]
+                    metrics.count("FlickrGroupsSuggested", float(len(groups)))
+                elif settings.FLICKR_GROUPS_VIA_LLM_ENABLED:
                     groups = suggest_groups_via_llm(item, flickr_client=client, settings=settings)
                     metrics.count("FlickrGroupsSuggested", float(len(groups)))
                 else:
@@ -64,6 +68,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Upload to Flickr using the real API client
         flickr_id = client.upload_bytes(
             data,
+            is_public=settings.FLICKR_UPLOAD_PUBLIC
             # You can tweak visibility/safety defaults here if desired
         )
 
@@ -73,7 +78,10 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Optionally pick Flickr groups for this photo and add it to the selected groups
         try:
             groups: List[str] = []
-            if settings.FLICKR_GROUPS_VIA_LLM_ENABLED:
+            static_ids = settings.FLICKR_STATIC_GROUP_IDS
+            if static_ids:
+                groups = [str(g).strip() for g in static_ids if str(g).strip()]
+            elif settings.FLICKR_GROUPS_VIA_LLM_ENABLED:
                 groups = suggest_groups_via_llm(item, flickr_client=client, settings=settings)
 
             if groups:

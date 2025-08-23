@@ -1,5 +1,6 @@
 # Python
 import pytest
+from unittest.mock import patch
 
 import shootflow.handlers.flickr_poster as flickr_poster
 from shootflow.shared.config import settings
@@ -59,25 +60,25 @@ class _S3DownloadAdapter:
         return b"".join(chunks)
 
 
-def test_no_ready_items_returns_zero(fake_ddb_factory, metrics_spy, monkeypatch):
+def test_no_ready_items_returns_zero(fake_ddb_factory, metrics_spy):
     settings.S3_BUCKET = "test-bucket"
 
     fake_ddb = fake_ddb_factory("success")
     # No items in both primary and wrap-around windows
     fake_ddb.query_responses = [[], []]
     repo = PhotoRepository(ddb_client=fake_ddb)
-    monkeypatch.setattr(flickr_poster, "_repo", repo, raising=True)
-    monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
-    # Handler instantiates FlickrAPIClient early; stub with a harmless fake
-    monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: _FakeFlickrOK(), raising=True)
 
-    got = flickr_poster.handler({}, None)
+    with patch("shootflow.handlers.flickr_poster._repo", repo), \
+         patch("shootflow.handlers.flickr_poster.metrics", metrics_spy), \
+         patch("shootflow.handlers.flickr_poster.FlickrAPIClient", return_value=_FakeFlickrOK()):
+        got = flickr_poster.handler({}, None)
+
     assert got == {"posted": 0, "errors": 0}
     assert metrics_spy.calls == []
 
 
 def test_success_flow_uses_fake_s3_and_ddb(
-    fake_s3_factory, fake_ddb_factory, metrics_spy, monkeypatch
+    fake_s3_factory, fake_ddb_factory, metrics_spy
 ):
     settings.S3_BUCKET = "photos"
 
@@ -86,22 +87,20 @@ def test_success_flow_uses_fake_s3_and_ddb(
     fake_ddb = fake_ddb_factory("success")
     fake_ddb.query_responses = [[ddb_item]]  # first window returns the item
     repo = PhotoRepository(ddb_client=fake_ddb)
-    monkeypatch.setattr(flickr_poster, "_repo", repo, raising=True)
 
     # S3 content for the key
     key = "ready/p-001.jpg"
     data = b"\x01\x02imagebytes"
     fake_s3 = fake_s3_factory({key: data})
-    monkeypatch.setattr(flickr_poster, "_s3_store", _S3DownloadAdapter(fake_s3, "photos"), raising=True)
 
     # Flickr client stub
     fake_flickr = _FakeFlickrOK()
-    monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: fake_flickr, raising=True)
 
-    # Metrics
-    monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
-
-    got = flickr_poster.handler({}, None)
+    with patch("shootflow.handlers.flickr_poster._repo", repo), \
+         patch("shootflow.handlers.flickr_poster._s3_store", _S3DownloadAdapter(fake_s3, "photos")), \
+         patch("shootflow.handlers.flickr_poster.FlickrAPIClient", return_value=fake_flickr), \
+         patch("shootflow.handlers.flickr_poster.metrics", metrics_spy):
+        got = flickr_poster.handler({}, None)
     assert got == {"posted": 1, "errors": 0}
 
     # S3 called with expected bucket/key
@@ -142,48 +141,46 @@ def test_missing_bucket_counts_failed(fake_ddb_factory, metrics_spy, monkeypatch
     assert getattr(fake_ddb, "update_calls", []) == []
 
 
-def test_s3_download_failure_counts_failed(fake_s3_factory, fake_ddb_factory, metrics_spy, monkeypatch):
+def test_s3_download_failure_counts_failed(fake_s3_factory, fake_ddb_factory, metrics_spy):
     settings.S3_BUCKET = "photos"
 
     fake_ddb = fake_ddb_factory("success")
     fake_ddb.query_responses = [[_ddb_item("p-003")]]
     repo = PhotoRepository(ddb_client=fake_ddb)
-    monkeypatch.setattr(flickr_poster, "_repo", repo, raising=True)
 
     class BoomStore:
         def download_bytes(self, bucket, key):
             raise RuntimeError("s3 read failed")
 
-    monkeypatch.setattr(flickr_poster, "_s3_store", BoomStore(), raising=True)
-    monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: _FakeFlickrOK(), raising=True)
-    monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
-
-    with pytest.raises(RuntimeError):
-        flickr_poster.handler({}, None)
+    with patch("shootflow.handlers.flickr_poster._repo", repo), \
+         patch("shootflow.handlers.flickr_poster._s3_store", BoomStore()), \
+         patch("shootflow.handlers.flickr_poster.FlickrAPIClient", return_value=_FakeFlickrOK()), \
+         patch("shootflow.handlers.flickr_poster.metrics", metrics_spy):
+        with pytest.raises(RuntimeError):
+            flickr_poster.handler({}, None)
 
     assert ("FlickrPostFailed", 1.0) in metrics_spy.calls
     assert getattr(fake_ddb, "update_calls", []) == []
 
 
 def test_upload_failure_counts_failed_and_no_mark_posted(
-    fake_s3_factory, fake_ddb_factory, metrics_spy, monkeypatch
+    fake_s3_factory, fake_ddb_factory, metrics_spy
 ):
     settings.S3_BUCKET = "photos"
 
     key = "ready/p-004.jpg"
     fake_s3 = fake_s3_factory({key: b"bytes"})
-    monkeypatch.setattr(flickr_poster, "_s3_store", _S3DownloadAdapter(fake_s3, "photos"), raising=True)
 
     fake_ddb = fake_ddb_factory("success")
     fake_ddb.query_responses = [[_ddb_item("p-004")]]
     repo = PhotoRepository(ddb_client=fake_ddb)
-    monkeypatch.setattr(flickr_poster, "_repo", repo, raising=True)
 
-    monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: _FakeFlickrBoom(), raising=True)
-    monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
-
-    with pytest.raises(RuntimeError):
-        flickr_poster.handler({}, None)
+    with patch("shootflow.handlers.flickr_poster._s3_store", _S3DownloadAdapter(fake_s3, "photos")), \
+         patch("shootflow.handlers.flickr_poster._repo", repo), \
+         patch("shootflow.handlers.flickr_poster.FlickrAPIClient", return_value=_FakeFlickrBoom()), \
+         patch("shootflow.handlers.flickr_poster.metrics", metrics_spy):
+        with pytest.raises(RuntimeError):
+            flickr_poster.handler({}, None)
 
     assert ("FlickrPostFailed", 1.0) in metrics_spy.calls
     assert getattr(fake_ddb, "update_calls", []) == []
@@ -205,7 +202,7 @@ class _FakeFlickrWithGroups:
 
 
 def test_llm_groups_selected_and_added(
-    fake_s3_factory, fake_ddb_factory, metrics_spy, monkeypatch
+    fake_s3_factory, fake_ddb_factory, metrics_spy
 ):
     # Ensure non-dry-run and LLM enabled for this test
     settings.S3_BUCKET = "photos"
@@ -217,25 +214,21 @@ def test_llm_groups_selected_and_added(
     fake_ddb = fake_ddb_factory("success")
     fake_ddb.query_responses = [[ddb_item]]
     repo = PhotoRepository(ddb_client=fake_ddb)
-    monkeypatch.setattr(flickr_poster, "_repo", repo, raising=True)
 
     # S3 data
     key = "ready/p-005.jpg"
     data = b"\x10\x20img"
     fake_s3 = fake_s3_factory({key: data})
-    monkeypatch.setattr(flickr_poster, "_s3_store", _S3DownloadAdapter(fake_s3, "photos"), raising=True)
 
     # Flickr client with group add
     fake_flickr = _FakeFlickrWithGroups()
-    monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: fake_flickr, raising=True)
 
-    # Stub LLM suggester to return 2 groups
-    monkeypatch.setattr(flickr_poster, "suggest_groups_via_llm", lambda item, flickr_client, settings: ["g1", "g2"], raising=True)
-
-    # Metrics
-    monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
-
-    got = flickr_poster.handler({}, None)
+    with patch("shootflow.handlers.flickr_poster._repo", repo), \
+         patch("shootflow.handlers.flickr_poster._s3_store", _S3DownloadAdapter(fake_s3, "photos")), \
+         patch("shootflow.handlers.flickr_poster.FlickrAPIClient", return_value=fake_flickr), \
+         patch("shootflow.handlers.flickr_poster.suggest_groups_via_llm", return_value=["g1", "g2"]), \
+         patch("shootflow.handlers.flickr_poster.metrics", metrics_spy):
+        got = flickr_poster.handler({}, None)
     assert got == {"posted": 1, "errors": 0}
 
     # Verify groups were added
@@ -245,7 +238,7 @@ def test_llm_groups_selected_and_added(
 
 
 def test_llm_groups_error_does_not_fail_post(
-    fake_s3_factory, fake_ddb_factory, metrics_spy, monkeypatch
+    fake_s3_factory, fake_ddb_factory, metrics_spy
 ):
     settings.S3_BUCKET = "photos"
     settings.FLICKR_GROUPS_DRY_RUN_ENABLED = False
@@ -256,26 +249,24 @@ def test_llm_groups_error_does_not_fail_post(
     fake_ddb = fake_ddb_factory("success")
     fake_ddb.query_responses = [[ddb_item]]
     repo = PhotoRepository(ddb_client=fake_ddb)
-    monkeypatch.setattr(flickr_poster, "_repo", repo, raising=True)
 
     # S3 data
     key = "ready/p-006.jpg"
     data = b"\x33\x44img"
     fake_s3 = fake_s3_factory({key: data})
-    monkeypatch.setattr(flickr_poster, "_s3_store", _S3DownloadAdapter(fake_s3, "photos"), raising=True)
 
     # Flickr fake
     fake_flickr = _FakeFlickrWithGroups()
-    monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: fake_flickr, raising=True)
 
-    # LLM suggester raises
     def boom(*args, **kwargs):
         raise RuntimeError("llm down")
-    monkeypatch.setattr(flickr_poster, "suggest_groups_via_llm", boom, raising=True)
 
-    monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
-
-    got = flickr_poster.handler({}, None)
+    with patch("shootflow.handlers.flickr_poster._repo", repo), \
+         patch("shootflow.handlers.flickr_poster._s3_store", _S3DownloadAdapter(fake_s3, "photos")), \
+         patch("shootflow.handlers.flickr_poster.FlickrAPIClient", return_value=fake_flickr), \
+         patch("shootflow.handlers.flickr_poster.suggest_groups_via_llm", side_effect=boom), \
+         patch("shootflow.handlers.flickr_poster.metrics", metrics_spy):
+        got = flickr_poster.handler({}, None)
     assert got == {"posted": 1, "errors": 0}
     # No group adds on error
     assert fake_flickr.group_add_calls == []

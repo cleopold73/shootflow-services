@@ -10,11 +10,14 @@ FLICKR_SECRET_NAME = "FLICKR-API"
 FLICKR_UPLOAD_TIMEOUT_SECONDS = 120
 FLICKR_UPLOAD_MAX_RETRIES = 1
 FLICKR_UPLOAD_BACKOFF_SECONDS = 2.0
+FLICKR_UPLOAD_PUBLIC = true
 
 # LLM-based group suggestion configuration
 FLICKR_GROUPS_VIA_LLM_ENABLED = true
 FLICKR_GROUPS_DRY_RUN_ENABLED = false
 
+# Optional: static fallback/bypass group IDs; if non-empty, LLM selection is skipped
+FLICKR_STATIC_GROUP_IDS = []
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 OPENAI_CHAT_MODEL = "gpt-5"
 OPENAI_SECRET_NAME = "OPENAI-API"

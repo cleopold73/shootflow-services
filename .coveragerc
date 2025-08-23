@@ -1,0 +1,11 @@
+[run]
+# Exclude debug-test-utils from measurement
+omit =
+    debug-test-utils/*
+    shootflow/debug-test-utils/*
+
+[report]
+# Also exclude it from the report output entirely
+omit =
+    debug-test-utils/*
+    shootflow/debug-test-utils/*

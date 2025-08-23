@@ -149,6 +149,20 @@ def test_success_end_to_end(fake_s3_factory, fake_ddb_factory, metrics_spy, monk
     # Metrics
     monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
 
+    # Capture group add calls by patching the Group instance methods used by the client
+    objects_mod = sys.modules["flickr_api.objects"]
+    GroupCls = getattr(objects_mod, "Group")
+    group_add_calls = []
+
+    def _getInfo(self):
+        return {"group": {"id": self.id}}
+
+    def _add(self, *, photo_id):
+        group_add_calls.append((photo_id, self.id))
+
+    # The stubbed Group class doesn't define these attributes yet; add them with raising=False
+    monkeypatch.setattr(GroupCls, "addPhoto", _add, raising=False)
+
     got = flickr_poster.handler({}, None)
     assert got == {"posted": 1, "errors": 0}
 
@@ -167,9 +181,8 @@ def test_success_end_to_end(fake_s3_factory, fake_ddb_factory, metrics_spy, monk
     assert ("FlickrPosted", 1.0) in metrics_spy.calls
 
     # With LLM mocked, the handler should attempt to add the photo to suggested groups
-    raw = flickr_test_env["raw_flickr"]
     # Expect two adds with the uploaded photo id ("999") to g1 and g2
-    assert set(raw.calls) == {("999", "g1"), ("999", "g2")}
+    assert set(group_add_calls) == {("999", "g1"), ("999", "g2")}
     # And corresponding metrics for suggestion and add
     assert ("FlickrGroupsSuggested", 2.0) in metrics_spy.calls
     assert ("FlickrGroupsAdded", 2.0) in metrics_spy.calls
