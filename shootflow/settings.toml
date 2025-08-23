@@ -11,7 +11,22 @@ FLICKR_UPLOAD_TIMEOUT_SECONDS = 120
 FLICKR_UPLOAD_MAX_RETRIES = 1
 FLICKR_UPLOAD_BACKOFF_SECONDS = 2.0
 
-EXIF_BLOCKLIST = ["canon", "nikon", "sony", "fujifilm", "fuji", "lumix", "panasonic", "olympus", "leica", "pentax", "ricoh", "hasselblad", "phaseone", "sigma", "tamron", "tokina", "zeiss", "voigtlander", "dji", "gopro", "rf", "ef", "e-mount", "fe", "zf", "z-mount", "m-mount", "x-mount", "f-mount", "mft", "micro four thirds", "four thirds", "nikkor", "dslr", "mirrorless", "full frame", "aps-c", "crop sensor"]
+# LLM-based group suggestion configuration
+FLICKR_GROUPS_VIA_LLM_ENABLED = true
+FLICKR_GROUPS_DRY_RUN_ENABLED = false
+
+OPENAI_BASE_URL = "https://api.openai.com/v1"
+OPENAI_CHAT_MODEL = "gpt-5"
+OPENAI_SECRET_NAME = "OPENAI-API"
+
+LLM_MAX_GROUPS = 12
+LLM_MAX_CANDIDATE_GROUPS = 100
+LLM_HTTP_CONNECT_TIMEOUT_SECONDS = 10.0
+LLM_HTTP_READ_TIMEOUT_SECONDS = 120.0
+LLM_HTTP_RETRIES = 3
+LLM_HTTP_BACKOFF_BASE_SECONDS = 1.5
+
+EXIF_BLOCKLIST = []
 EXIF_MAX_TEXT_LENGTH = 20000
 EXIF_BASE64_SNIFF_PREFIX_LEN = 200
 EXIF_LARGE_COLLECTION_SIZE = 2000

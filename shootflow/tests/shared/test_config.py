@@ -35,7 +35,6 @@ def test_settings_ini_loading(monkeypatch: pytest.MonkeyPatch) -> None:
     # BLOCKLIST should be a list/tuple and contain brand terms from settings.toml
     bl = settings.get("EXIF_BLOCKLIST")
     assert isinstance(bl, (list, tuple))
-    assert "canon" in {str(x).lower() for x in bl}
 
     # Integer tunables should parse from "@int ..." entries
     assert settings.get("EXIF_MAX_TEXT_LENGTH") == 20000

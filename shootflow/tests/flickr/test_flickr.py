@@ -3,8 +3,8 @@ import types
 
 import pytest
 
-from shootflow.shared.flickr import FlickrAPIClient
-import shootflow.shared.flickr as flickr_mod
+from shootflow.flickr import FlickrAPIClient
+import shootflow.flickr.flickr as flickr_mod
 from shootflow.shared.config import settings
 
 
@@ -205,3 +205,29 @@ def test_missing_secret_name_raises(monkeypatch):
     settings.FLICKR_SECRET_NAME = None  # type: ignore
     with pytest.raises(RuntimeError):
         FlickrAPIClient()
+
+
+def test_add_photo_to_group_success(flickr_test_env):
+    raw = flickr_test_env["raw_flickr"]
+    c = FlickrAPIClient()
+
+    c.add_photo_to_group("p123", "g999")
+    assert raw.calls == [("p123", "g999")]
+
+
+def test_add_photo_to_group_invalid_args(flickr_test_env):
+    c = FlickrAPIClient()
+    with pytest.raises(ValueError):
+        c.add_photo_to_group("", "g1")
+    with pytest.raises(ValueError):
+        c.add_photo_to_group("p1", "")
+
+
+def test_add_photo_to_group_failure_raises(flickr_test_env):
+    raw = flickr_test_env["raw_flickr"]
+    raw.side_effect = Exception("boom")
+
+    c = FlickrAPIClient()
+    with pytest.raises(RuntimeError) as ei:
+        c.add_photo_to_group("p2", "g2")
+    assert "Failed to add photo_id" in str(ei.value)

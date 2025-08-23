@@ -4,6 +4,7 @@ import hashlib
 import tempfile
 import json
 import types
+import sys
 from typing import Any, Callable, Dict, Optional
 
 import pytest
@@ -321,18 +322,35 @@ class ConnectionErrorFake(Exception):
     pass
 
 
+class FakeRawFlickr:
+    """
+    Minimal shim for flickr_api.api.flickr to support groups_pools_add.
+    Records calls and can simulate failure via side_effect.
+    """
+    def __init__(self):
+        self.calls: list[tuple[str, str]] = []
+        self.side_effect: Optional[BaseException] = None
+
+    def groups_pools_add(self, *, photo_id: str, group_id: str):
+        self.calls.append((photo_id, group_id))
+        if self.side_effect:
+            raise self.side_effect
+        return {"stat": "ok"}
+
+
 @pytest.fixture
 def flickr_test_env(monkeypatch):
     """
-    Patches shootflow.shared.flickr module to use:
+    Patches shootflow.flickr.flickr module to use:
       - FakeSecretsManager via a minimal boto3 shim (secrets only)
       - FakeFlickrAPI as the flickr_api module
       - requests.exceptions mapped to local fake classes for retry testing
+      - A fake flickr_api.api.flickr module for groups.pools.add
 
     Returns a dict with handles to the fakes for assertions and control:
-      {"fake_api": FakeFlickrAPI, "fake_sm": FakeSecretsManager}
+      {"fake_api": FakeFlickrAPI, "fake_sm": FakeSecretsManager, "raw_flickr": FakeRawFlickr}
     """
-    import shootflow.shared.flickr as flickr_mod
+    import shootflow.flickr.flickr as flickr_mod
     from shootflow.shared.config import settings
 
     # Stable, fast tunables
@@ -364,4 +382,16 @@ def flickr_test_env(monkeypatch):
     )
     monkeypatch.setattr(flickr_mod, "requests", req_shim, raising=True)
 
-    return {"fake_api": fake_api, "fake_sm": fake_sm, "ReadTimeout": ReadTimeoutFake, "ConnectionError": ConnectionErrorFake}
+    # Provide flickr_api.api.flickr for add_photo_to_group()
+    fake_raw = FakeRawFlickr()
+    api_module = types.ModuleType("flickr_api.api")
+    api_module.flickr = fake_raw
+    monkeypatch.setitem(sys.modules, "flickr_api.api", api_module)
+
+    return {
+        "fake_api": fake_api,
+        "fake_sm": fake_sm,
+        "ReadTimeout": ReadTimeoutFake,
+        "ConnectionError": ConnectionErrorFake,
+        "raw_flickr": fake_raw,
+    }

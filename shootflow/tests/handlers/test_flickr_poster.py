@@ -68,6 +68,8 @@ def test_no_ready_items_returns_zero(fake_ddb_factory, metrics_spy, monkeypatch)
     repo = PhotoRepository(ddb_client=fake_ddb)
     monkeypatch.setattr(flickr_poster, "_repo", repo, raising=True)
     monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
+    # Handler instantiates FlickrAPIClient early; stub with a harmless fake
+    monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: _FakeFlickrOK(), raising=True)
 
     got = flickr_poster.handler({}, None)
     assert got == {"posted": 0, "errors": 0}
@@ -129,6 +131,8 @@ def test_missing_bucket_counts_failed(fake_ddb_factory, metrics_spy, monkeypatch
     repo = PhotoRepository(ddb_client=fake_ddb)
     monkeypatch.setattr(flickr_poster, "_repo", repo, raising=True)
     monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
+    # Avoid real Flickr init
+    monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: _FakeFlickrOK(), raising=True)
 
     with pytest.raises(RuntimeError):
         flickr_poster.handler({}, None)
@@ -183,3 +187,95 @@ def test_upload_failure_counts_failed_and_no_mark_posted(
 
     assert ("FlickrPostFailed", 1.0) in metrics_spy.calls
     assert getattr(fake_ddb, "update_calls", []) == []
+
+
+# --- New fakes and tests for LLM group add flow ---
+
+class _FakeFlickrWithGroups:
+    def __init__(self):
+        self.upload_calls = []
+        self.group_add_calls = []
+
+    def upload_bytes(self, data: bytes, *, title=None, description=None, tags=None, **opts) -> str:
+        self.upload_calls.append({"len": len(data), "title": title, "description": description, "tags": list(tags or [])})
+        return "fl-xyz"
+
+    def add_photo_to_group(self, photo_id: str, group_id: str):
+        self.group_add_calls.append((photo_id, group_id))
+
+
+def test_llm_groups_selected_and_added(
+    fake_s3_factory, fake_ddb_factory, metrics_spy, monkeypatch
+):
+    # Ensure non-dry-run and LLM enabled for this test
+    settings.S3_BUCKET = "photos"
+    settings.FLICKR_GROUPS_DRY_RUN_ENABLED = False
+    settings.FLICKR_GROUPS_VIA_LLM_ENABLED = True
+
+    # DDB returns one READY item
+    ddb_item = _ddb_item("p-005", title="City", caption="Skyline", tags=["city"])
+    fake_ddb = fake_ddb_factory("success")
+    fake_ddb.query_responses = [[ddb_item]]
+    repo = PhotoRepository(ddb_client=fake_ddb)
+    monkeypatch.setattr(flickr_poster, "_repo", repo, raising=True)
+
+    # S3 data
+    key = "ready/p-005.jpg"
+    data = b"\x10\x20img"
+    fake_s3 = fake_s3_factory({key: data})
+    monkeypatch.setattr(flickr_poster, "_s3_store", _S3DownloadAdapter(fake_s3, "photos"), raising=True)
+
+    # Flickr client with group add
+    fake_flickr = _FakeFlickrWithGroups()
+    monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: fake_flickr, raising=True)
+
+    # Stub LLM suggester to return 2 groups
+    monkeypatch.setattr(flickr_poster, "suggest_groups_via_llm", lambda item, flickr_client, settings: ["g1", "g2"], raising=True)
+
+    # Metrics
+    monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
+
+    got = flickr_poster.handler({}, None)
+    assert got == {"posted": 1, "errors": 0}
+
+    # Verify groups were added
+    assert fake_flickr.group_add_calls == [("fl-xyz", "g1"), ("fl-xyz", "g2")]
+    assert ("FlickrGroupsSuggested", 2.0) in metrics_spy.calls
+    assert ("FlickrGroupsAdded", 2.0) in metrics_spy.calls
+
+
+def test_llm_groups_error_does_not_fail_post(
+    fake_s3_factory, fake_ddb_factory, metrics_spy, monkeypatch
+):
+    settings.S3_BUCKET = "photos"
+    settings.FLICKR_GROUPS_DRY_RUN_ENABLED = False
+    settings.FLICKR_GROUPS_VIA_LLM_ENABLED = True
+
+    # DDB item
+    ddb_item = _ddb_item("p-006")
+    fake_ddb = fake_ddb_factory("success")
+    fake_ddb.query_responses = [[ddb_item]]
+    repo = PhotoRepository(ddb_client=fake_ddb)
+    monkeypatch.setattr(flickr_poster, "_repo", repo, raising=True)
+
+    # S3 data
+    key = "ready/p-006.jpg"
+    data = b"\x33\x44img"
+    fake_s3 = fake_s3_factory({key: data})
+    monkeypatch.setattr(flickr_poster, "_s3_store", _S3DownloadAdapter(fake_s3, "photos"), raising=True)
+
+    # Flickr fake
+    fake_flickr = _FakeFlickrWithGroups()
+    monkeypatch.setattr(flickr_poster, "FlickrAPIClient", lambda: fake_flickr, raising=True)
+
+    # LLM suggester raises
+    def boom(*args, **kwargs):
+        raise RuntimeError("llm down")
+    monkeypatch.setattr(flickr_poster, "suggest_groups_via_llm", boom, raising=True)
+
+    monkeypatch.setattr(flickr_poster, "metrics", metrics_spy, raising=True)
+
+    got = flickr_poster.handler({}, None)
+    assert got == {"posted": 1, "errors": 0}
+    # No group adds on error
+    assert fake_flickr.group_add_calls == []

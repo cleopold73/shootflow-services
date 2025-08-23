@@ -1,9 +1,75 @@
 # Python
 import pytest
+import sys
+import types
 
 import shootflow.handlers.flickr_poster as flickr_poster
 from shootflow.shared.config import settings
 from shootflow.shared.ddb_repo import PhotoRepository
+import shootflow.flickr.group_suggester_llm as gl
+from shootflow.tests.conftest import FakeBoto3SecretsOnly, FakeSecretsManager
+
+
+@pytest.fixture(autouse=True, scope="function")
+def _mock_openai_for_integration(monkeypatch, flickr_test_env):
+    """
+    Integration tests mock only external dependencies:
+      - AWS Secrets Manager (for OpenAI API key) within group_suggester_llm
+      - OpenAI HTTP endpoint via requests.post inside group_suggester_llm
+      - flickr_api.objects.Group to provide candidate groups for filtering
+    """
+    # Enable LLM flow and ensure non-dry-run
+    settings.FLICKR_GROUPS_VIA_LLM_ENABLED = True
+    settings.FLICKR_GROUPS_DRY_RUN_ENABLED = False
+
+    # Provide required LLM settings
+    settings.OPENAI_SECRET_NAME = "OPENAI-SECRET"
+    settings.OPENAI_BASE_URL = "https://api.openai.com/v1"
+    settings.OPENAI_CHAT_MODEL = "gpt-any"
+    settings.LLM_MAX_GROUPS = 5
+    settings.LLM_MAX_CANDIDATE_GROUPS = 100
+    settings.LLM_HTTP_CONNECT_TIMEOUT_SECONDS = 1.0
+    settings.LLM_HTTP_READ_TIMEOUT_SECONDS = 1.0
+    settings.LLM_HTTP_RETRIES = 0
+    settings.LLM_HTTP_BACKOFF_BASE_SECONDS = 0.0
+    settings.AWS_REGION = "us-east-1"
+
+    # Use shared test fakes for Secrets Manager
+    openai_sm = FakeSecretsManager({"api_key": "sk-test"})
+    monkeypatch.setattr(gl, "boto3", FakeBoto3SecretsOnly(openai_sm), raising=True)
+
+    # Mock OpenAI HTTP to return two groups; LLM logic will filter to candidate groups
+    class _RespOK:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {"message": {"content": gl.json.dumps({"selected_group_ids": ["g1", "g2", "g999"]})}}
+                ]
+            }
+
+    monkeypatch.setattr(gl.requests, "post", lambda *a, **k: _RespOK(), raising=True)
+
+    # Provide a stub for flickr_api.objects.Group.getGroups() so list_member_groups has candidates
+    objects_mod = types.ModuleType("flickr_api.objects")
+
+    class _Group:
+        def __init__(self, id):
+            self.id = id
+
+        def getGroups(self):
+            # Minimal iterable of group-like objects
+            return [
+                types.SimpleNamespace(id="g1", name="One"),
+                types.SimpleNamespace(id="g2", name="Two"),
+                types.SimpleNamespace(id="gX", name="Other"),
+            ]
+
+    objects_mod.Group = _Group  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "flickr_api.objects", objects_mod)
+
+    yield
 
 
 def _ddb_item(photoId: str, *, title=None, caption=None, tags=None):
@@ -97,8 +163,16 @@ def test_success_end_to_end(fake_s3_factory, fake_ddb_factory, metrics_spy, monk
     assert ":fid" in upd["ExpressionAttributeValues"]
     assert "S" in upd["ExpressionAttributeValues"][":fid"]
 
-    # Metric emitted
+    # Metric emitted for post
     assert ("FlickrPosted", 1.0) in metrics_spy.calls
+
+    # With LLM mocked, the handler should attempt to add the photo to suggested groups
+    raw = flickr_test_env["raw_flickr"]
+    # Expect two adds with the uploaded photo id ("999") to g1 and g2
+    assert set(raw.calls) == {("999", "g1"), ("999", "g2")}
+    # And corresponding metrics for suggestion and add
+    assert ("FlickrGroupsSuggested", 2.0) in metrics_spy.calls
+    assert ("FlickrGroupsAdded", 2.0) in metrics_spy.calls
 
 
 def test_missing_bucket_bubbles_and_counts_failed(fake_ddb_factory, metrics_spy, monkeypatch, fake_s3_factory, flickr_test_env):

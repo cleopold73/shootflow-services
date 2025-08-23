@@ -5,7 +5,7 @@ import sys
 import json
 from pathlib import Path
 
-from shootflow.shared.flickr import FlickrAPIClient
+from shootflow.flickr import FlickrAPIClient
 
 
 def parse_args(argv=None):

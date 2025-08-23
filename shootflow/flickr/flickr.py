@@ -119,6 +119,11 @@ class FlickrAPIClient:
         flickr_api.set_auth_handler(auth)
         flickr_api.set_timeout(self._upload_timeout_s)
 
+        # Keep handles for subsequent calls
+        self._auth_handler = auth
+        # Keep the authenticated user NSID (if provided) for subsequent calls
+        self._user_nsid = user_nsid
+
     @staticmethod
     def _tags_to_string(tags: Optional[Iterable[str]]) -> Optional[str]:
         """
@@ -218,6 +223,37 @@ class FlickrAPIClient:
         """
         # flickr_api exposes methods directly in the module namespace
         return flickr_api.test.login()
+
+    def _resolve_user_nsid(self) -> Optional[str]:
+        """
+        Resolve the authenticated user's NSID using multiple sources:
+          1) Stored during init from the secret (preferred)
+          2) From the auth handler if available
+          3) From flickr_api.test.login() response
+        """
+        if getattr(self, "_user_nsid", None):
+            return self._user_nsid
+        # Try auth handler
+        try:
+            auth = getattr(self, "_auth_handler", None)
+            if auth and getattr(auth, "user_nsid", None):
+                self._user_nsid = auth.user_nsid  # cache
+                return self._user_nsid
+        except Exception:
+            pass
+        # Try flickr.test.login
+        try:
+            info = flickr_api.test.login()
+            # Common shapes: {"user": {"id": "...", "nsid": "..."}} or nested username
+            if isinstance(info, dict):
+                user = info.get("user") or {}
+                uid = user.get("id") or user.get("nsid")
+                if uid:
+                    self._user_nsid = str(uid)
+                    return self._user_nsid
+        except Exception:
+            pass
+        return None
 
     def _upload_with_retries(self, **kwargs):
         """
@@ -364,3 +400,116 @@ class FlickrAPIClient:
                 os.unlink(tmp_path)
             except FileNotFoundError:
                 pass
+
+    def list_member_groups(
+        self,
+        *,
+        include_descriptions: bool = True,
+        max_groups: int = 200,
+    ) -> list[dict]:
+        """
+        Return a list of groups the authenticated user is a member of.
+        Each item: {"id": str, "name": str, "description": Optional[str]}.
+
+        Simplified implementation using flickr_api.objects.Group(id=user_nsid).getGroups().
+        """
+        def _to_text(v) -> str:
+            if isinstance(v, bytes):
+                try:
+                    return v.decode("utf-8", "ignore")
+                except Exception:
+                    return str(v)
+            return "" if v is None else str(v)
+
+        user_id = self._resolve_user_nsid()
+        if not user_id:
+            logger.warning("Could not resolve user NSID; returning empty list")
+            return []
+
+        # Load Group object and fetch groups
+        try:
+            from flickr_api.objects import Group  # type: ignore
+        except Exception as e:
+            logger.warning("Unable to import flickr_api.objects.Group: %s", e, exc_info=False)
+            return []
+
+        try:
+            resp = Group(id=user_id).getGroups()
+        except Exception as e:
+            logger.warning("Group(id=user).getGroups() failed: %s", e, exc_info=False)
+            return []
+
+        results: list[dict] = []
+
+        # Iterate custom iterable of Group-like objects
+        try:
+            iterator = iter(resp)
+        except TypeError:
+            return results
+
+        for item in iterator:
+            if isinstance(item, dict):
+                gid = _to_text(item.get("id") or item.get("nsid"))
+                name = _to_text(item.get("name") or item.get("path_alias") or gid)
+            else:
+                gid = _to_text(getattr(item, "id", None) or getattr(item, "nsid", None))
+                name = _to_text(getattr(item, "name", None) or getattr(item, "path_alias", None) or gid)
+            if gid:
+                results.append({"id": gid, "name": name, "description": None})
+            if len(results) >= max_groups:
+                break
+
+        # Optionally enrich with descriptions via helper
+        if include_descriptions and results:
+            for entry in results:
+                try:
+                    entry["description"] = self.get_group_description(entry["id"]) or None
+                except Exception:
+                    # Keep name/id even if description fails
+                    pass
+
+        return results
+
+    def get_group_description(self, group_id: str) -> Optional[str]:
+        """
+        Retrieve a group's description using Group(id=group_id).getInfo().
+        Returns None if unavailable.
+        """
+        try:
+            from flickr_api.objects import Group  # type: ignore
+            info = Group(id=group_id).getInfo()
+            container = info.get("group", info) if isinstance(info, dict) else {}
+            desc = container.get("description")
+            if isinstance(desc, dict):
+                val = desc.get("_content", "")
+            else:
+                val = desc
+            if isinstance(val, bytes):
+                try:
+                    val = val.decode("utf-8", "ignore")
+                except Exception:
+                    val = str(val)
+            text = str(val or "").strip()
+            return text or None
+        except Exception:
+            return None
+
+    def add_photo_to_group(self, photo_id: str, group_id: str) -> None:
+        """
+        Add an existing photo to a Flickr group pool (flickr.groups.pools.add).
+        Raises:
+            ValueError: if inputs are missing
+            RuntimeError: if the Flickr API call fails
+        """
+        if not photo_id or not group_id:
+            raise ValueError("photo_id and group_id are required")
+        try:
+            from flickr_api.api import flickr as raw_flickr  # type: ignore
+        except Exception as e:
+            logger.warning("Unable to import flickr_api.api.flickr: %s", e, exc_info=False)
+            raise
+        try:
+            # Flickr method binding: flickr.groups.pools.add -> groups_pools_add
+            raw_flickr.groups_pools_add(photo_id=photo_id, group_id=group_id)
+        except Exception as e:
+            raise RuntimeError(f"Failed to add photo_id={photo_id} to group_id={group_id}: {e}")
