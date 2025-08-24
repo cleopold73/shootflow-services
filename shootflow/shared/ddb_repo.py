@@ -42,12 +42,19 @@ class PhotoRepository:
         tags: list[str],
         gps: Optional[Dict[str, Any]],
         exif: Dict[str, Any],
+        *,
+        status: Optional[str] = None,
+        posted_time: Optional[datetime] = None,
+        flickr_id: Optional[str] = None,
     ) -> Tuple[bool, Optional[str]]:
         now_iso = datetime.now(tz=timezone.utc).isoformat()
 
+        # Status: default to READY, allow explicit POSTED via 'posted=True'
+        status_value = status if status else self.status_ready
+
         item = {
             "photoId": {"S": photoId},  # Primary (partition) key
-            "status": {"S": self.status_ready},
+            "status": {"S": status_value},
             "s3_key": {"S": s3_key},
             "filename": {"S": filename},
             "ingested_at": {"S": now_iso},
@@ -61,6 +68,15 @@ class PhotoRepository:
             item["tags"] = {"L": [{"S": t} for t in tags]}
         if gps is not None:
             item["gps"] = {"S": json.dumps(gps)}
+        # Optional posted metadata
+        if posted_time is not None:
+            if isinstance(posted_time, datetime):
+                pt_iso = posted_time.astimezone(timezone.utc).isoformat()
+            else:
+                pt_iso = str(posted_time)
+            item["posted_at"] = {"S": pt_iso}
+        if flickr_id:
+            item["flickr_photo_id"] = {"S": flickr_id}
 
         try:
             self.ddb.put_item(
@@ -129,12 +145,12 @@ class PhotoRepository:
         self.ddb.update_item(
             TableName=self.table_name,
             Key={"photoId": {"S": photoId}},
-            UpdateExpression="SET #st = :posted, posted_at = :ts, flickr_photo_id = :fid",
+            UpdateExpression="SET #st = :posted, posted_at = :posted_time, flickr_photo_id = :flickr_id",
             ExpressionAttributeNames={"#st": "status"},
             ExpressionAttributeValues={
                 ":posted": {"S": "POSTED"},
-                ":ts": {"S": now_iso},
-                ":fid": {"S": flickr_photo_id},
+                ":posted_time": {"S": now_iso},
+                ":flickr_id": {"S": flickr_photo_id},
             },
             ConditionExpression="attribute_exists(photoId)",
         )

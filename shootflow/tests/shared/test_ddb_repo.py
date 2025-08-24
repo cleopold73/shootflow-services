@@ -1,6 +1,7 @@
 # Python
 import json
 from typing import Any, Dict
+from datetime import datetime, timezone
 
 import pytest
 from botocore.exceptions import ClientError
@@ -243,6 +244,67 @@ def test_mark_posted_updates_status_and_sets_fields(fake_ddb_factory):
     vals = call["ExpressionAttributeValues"]
     assert names == {"#st": "status"}
     assert vals[":posted"]["S"] == "POSTED"
-    assert ":ts" in vals and "S" in vals[":ts"] and vals[":ts"]["S"]
-    assert vals[":fid"]["S"] == "fl-999"
+    assert ":posted_time" in vals and "S" in vals[":posted_time"] and vals[":posted_time"]["S"]
+    assert vals[":flickr_id"]["S"] == "fl-999"
     assert call["ConditionExpression"] == "attribute_exists(photoId)"
+
+
+def test_put_photo_item_can_set_posted_and_optional_fields(fake_ddb_factory):
+    settings.DDB_TABLE = "tbl"
+    settings.AWS_REGION = "us-east-1"
+    settings.S3_INGEST_STATUS_READY = "READY"
+
+    fake_ddb = fake_ddb_factory("success")
+    repo = PhotoRepository(ddb_client=fake_ddb)
+
+    ts = datetime(2021, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    ok, err = repo.put_photo_item(
+        photoId="id-posted",
+        s3_key="ready/p.jpg",
+        filename="p.jpg",
+        title=None,
+        caption=None,
+        tags=[],
+        gps=None,
+        exif={},
+        status="POSTED",
+        posted_time=ts,
+        flickr_id="fl-123",
+    )
+
+    assert ok is True and err is None
+    assert len(fake_ddb.put_item_calls) == 1
+    _, item, _ = fake_ddb.put_item_calls[0]
+
+    # Status should be POSTED when posted=True
+    assert item["status"]["S"] == "POSTED"
+    # Optional fields included when provided
+    assert item["posted_at"]["S"] == ts.isoformat()
+    assert item["flickr_photo_id"]["S"] == "fl-123"
+
+
+def test_put_photo_item_omits_posted_fields_when_not_provided(fake_ddb_factory):
+    settings.DDB_TABLE = "tbl"
+    settings.AWS_REGION = "us-east-1"
+    settings.S3_INGEST_STATUS_READY = "READY"
+
+    fake_ddb = fake_ddb_factory("success")
+    repo = PhotoRepository(ddb_client=fake_ddb)
+
+    ok, err = repo.put_photo_item(
+        photoId="id-no-post",
+        s3_key="ready/x.jpg",
+        filename="x.jpg",
+        title=None,
+        caption=None,
+        tags=[],
+        gps=None,
+        exif={},
+        # posted defaults to None -> status READY
+    )
+
+    assert ok is True and err is None
+    _, item, _ = fake_ddb.put_item_calls[0]
+    assert item["status"]["S"] == "READY"
+    assert "posted_at" not in item
+    assert "flickr_photo_id" not in item

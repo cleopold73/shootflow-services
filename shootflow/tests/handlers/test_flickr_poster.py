@@ -115,7 +115,7 @@ def test_success_flow_uses_fake_s3_and_ddb(
     assert len(fake_ddb.update_calls) == 1
     upd = fake_ddb.update_calls[0]
     assert upd["Key"] == {"photoId": {"S": "p-001"}}
-    assert ":fid" in upd["ExpressionAttributeValues"] and upd["ExpressionAttributeValues"][":fid"]["S"] == "fl-123"
+    assert ":flickr_id" in upd["ExpressionAttributeValues"] and upd["ExpressionAttributeValues"][":flickr_id"]["S"] == "fl-123"
 
     # Metric emitted
     assert ("FlickrPosted", 1.0) in metrics_spy.calls

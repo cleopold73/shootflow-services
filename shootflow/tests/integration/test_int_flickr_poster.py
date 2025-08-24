@@ -174,8 +174,8 @@ def test_success_end_to_end(fake_s3_factory, fake_ddb_factory, metrics_spy, monk
     upd = fake_ddb.update_calls[0]
     assert upd["Key"] == {"photoId": {"S": "p-001"}}
     # Flickr id recorded
-    assert ":fid" in upd["ExpressionAttributeValues"]
-    assert "S" in upd["ExpressionAttributeValues"][":fid"]
+    assert ":flickr_id" in upd["ExpressionAttributeValues"]
+    assert "S" in upd["ExpressionAttributeValues"][":flickr_id"]
 
     # Metric emitted for post
     assert ("FlickrPosted", 1.0) in metrics_spy.calls

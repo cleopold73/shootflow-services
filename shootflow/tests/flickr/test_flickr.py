@@ -1,8 +1,10 @@
 import os
+import sys
 import types
 from unittest.mock import patch
 
 import pytest
+from datetime import datetime, timezone
 
 from shootflow.flickr import FlickrAPIClient
 import shootflow.flickr.flickr as flickr_mod
@@ -160,10 +162,8 @@ def test_upload_retries_exhaust_then_raises(flickr_test_env):
     # All attempts timeout
     fake_api._upload_side_effects = [ReadTimeout("a"), ReadTimeout("b"), ReadTimeout("c")]
 
-    with pytest.raises(RuntimeError) as ei:
+    with pytest.raises(ReadTimeout):
         c.upload_file(__file__, title=None, description=None, tags=None)
-
-    assert "failed after" in str(ei.value)
 
 
 @patch("os.unlink")
@@ -277,3 +277,145 @@ def test_add_photo_to_group_failure_logs_no_raise(flickr_test_env, monkeypatch):
     c = FlickrAPIClient()
     # Should not raise; failure is logged and swallowed
     c.add_photo_to_group("p2", "g2")
+
+
+# ---- iter_public_photos_date_range tests ----
+
+def _install_person_stub(monkeypatch, pages_data):
+    """
+    Install a Person class into the existing flickr_api module whose getPhotos()
+    returns a paginated iterable based on pages_data: {page_number: [item_dict, ...]}.
+    Each item_dict supports keys: id, title, description, dateuploaded, tags (list[str|bytes]).
+    """
+    mod = sys.modules["flickr_api"]
+
+    class _Info:
+        def __init__(self, page, pages):
+            self.page = page
+            self.pages = pages
+
+    class _Resp:
+        def __init__(self, items, page, pages):
+            self._items = list(items)
+            self.info = _Info(page, pages)
+
+        def __iter__(self):
+            return iter(self._items)
+
+    class _Tag:
+        def __init__(self, raw):
+            self.raw = raw
+
+    class _Item:
+        def __init__(self, id, title, description, dateuploaded, tags):
+            self.id = id
+            self.title = title
+            self.description = description
+            self.dateuploaded = dateuploaded
+            self._tags = [_Tag(t) for t in (tags or [])]
+
+        def getTags(self):
+            return list(self._tags)
+
+    class Person:
+        def __init__(self, id):
+            self.id = id
+
+        def getPhotos(self, **kwargs):
+            page = int(kwargs.get("page", 1))
+            pages = max(pages_data.keys()) if pages_data else 1
+            raw_items = pages_data.get(page, [])
+            items = [_Item(**it) for it in raw_items]
+            return _Resp(items, page, pages)
+
+    monkeypatch.setattr(mod, "Person", Person, raising=False)
+
+
+def test_iter_public_no_user_nsid_yields_nothing(flickr_test_env, monkeypatch):
+    # Install a person stub even though it shouldn't be called when NSID is missing
+    _install_person_stub(monkeypatch, {1: []})
+
+    c = FlickrAPIClient()
+    # Force missing NSID for this test
+    c._user_nsid = ""
+
+    results = list(
+        c.iter_public_photos_date_range(
+            start_date=0, end_date=0, by="uploaded", per_page=10
+        )
+    )
+    assert results == []
+
+
+def test_iter_public_single_page_converts_datetime(flickr_test_env, monkeypatch):
+    epoch = 1_620_000_000
+    _install_person_stub(
+        monkeypatch,
+        {
+            1: [
+                {
+                    "id": "123",
+                    "title": "A Title",
+                    "description": "Desc",
+                    "dateuploaded": epoch,
+                    "tags": [b"raw1", "raw two"],
+                }
+            ]
+        },
+    )
+
+    c = FlickrAPIClient()
+    out = list(
+        c.iter_public_photos_date_range(
+            start_date=0, end_date=0, by="uploaded", per_page=10
+        )
+    )
+    assert len(out) == 1
+    item = out[0]
+    assert isinstance(item, flickr_mod.PhotoMetadata)
+    assert item.id == "123"
+    assert item.title == "A Title"
+    assert item.description == "Desc"
+    assert isinstance(item.tags, list)
+    assert "raw1" in item.tags
+    assert "raw two" in item.tags
+    assert isinstance(item.date_uploaded, datetime)
+    assert item.date_uploaded == datetime.fromtimestamp(epoch, tz=timezone.utc)
+
+
+def test_iter_public_paginates_two_pages(flickr_test_env, monkeypatch):
+    epoch1 = 1_620_000_000
+    epoch2 = 1_630_000_000
+    _install_person_stub(
+        monkeypatch,
+        {
+            1: [
+                {
+                    "id": "p1",
+                    "title": "First",
+                    "description": "D1",
+                    "dateuploaded": epoch1,
+                    "tags": ["t1"],
+                }
+            ],
+            2: [
+                {
+                    "id": "p2",
+                    "title": "Second",
+                    "description": "D2",
+                    "dateuploaded": epoch2,
+                    "tags": ["t2"],
+                }
+            ],
+        },
+    )
+
+    c = FlickrAPIClient()
+    got = list(
+        c.iter_public_photos_date_range(
+            start_date=0, end_date=0, by="uploaded", per_page=1
+        )
+    )
+    assert [x.id for x in got] == ["p1", "p2"]
+    assert got[0].date_uploaded == datetime.fromtimestamp(epoch1, tz=timezone.utc)
+    assert got[1].date_uploaded == datetime.fromtimestamp(epoch2, tz=timezone.utc)

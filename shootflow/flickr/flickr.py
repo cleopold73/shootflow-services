@@ -4,12 +4,16 @@ import base64
 import json
 import os
 import tempfile
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Iterator
 import logging
 import time
+from datetime import datetime, timezone
+from dataclasses import dataclass
 
 import boto3
 import flickr_api
+
+from shootflow.shared.helpers import to_epoch_seconds, retry_with_backoff
 
 # requests is an indirect dep of flickr-api; used only for exception types
 try:
@@ -20,6 +24,15 @@ except Exception:  # Fallback if requests import path changes
 from shootflow.shared.config import settings
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class PhotoMetadata:
+    id: str
+    title: str
+    description: Optional[str]
+    tags: list[str]
+    date_uploaded: Optional[datetime]
+
 
 
 class FlickrAPIClient:
@@ -79,7 +92,7 @@ class FlickrAPIClient:
         api_secret = str(data.get("api_secret", "")).strip()
         oauth_token = str(data.get("oauth_token", "")).strip()
         oauth_token_secret = str(data.get("oauth_token_secret", "")).strip()
-        user_nsid = (str(data.get("user_nsid", "")).strip() or None)
+        user_nsid = str(data.get("user_nsid", "")).strip()
         username = (str(data.get("username", "")).strip() or None)
 
         if not all([api_key, api_secret, oauth_token, oauth_token_secret]):
@@ -224,77 +237,6 @@ class FlickrAPIClient:
         # flickr_api exposes methods directly in the module namespace
         return flickr_api.test.login()
 
-    def _resolve_user_nsid(self) -> Optional[str]:
-        """
-        Resolve the authenticated user's NSID using multiple sources:
-          1) Stored during init from the secret (preferred)
-          2) From the auth handler if available
-          3) From flickr_api.test.login() response
-        """
-        if getattr(self, "_user_nsid", None):
-            return self._user_nsid
-        # Try auth handler
-        try:
-            auth = getattr(self, "_auth_handler", None)
-            if auth and getattr(auth, "user_nsid", None):
-                self._user_nsid = auth.user_nsid  # cache
-                return self._user_nsid
-        except Exception:
-            pass
-        # Try flickr.test.login
-        try:
-            info = flickr_api.test.login()
-            # Common shapes: {"user": {"id": "...", "nsid": "..."}} or nested username
-            if isinstance(info, dict):
-                user = info.get("user") or {}
-                uid = user.get("id") or user.get("nsid")
-                if uid:
-                    self._user_nsid = str(uid)
-                    return self._user_nsid
-        except Exception:
-            pass
-        return None
-
-    def _upload_with_retries(self, **kwargs):
-        """
-        Call flickr_api.upload with retries on transient network timeouts.
-        """
-        last_exc: Optional[BaseException] = None
-        for attempt in range(1, self._upload_max_retries + 1):
-            try:
-                return flickr_api.upload(**kwargs)
-            except Exception as exc:
-                is_timeout = False
-                is_conn_err = False
-
-                if requests is not None:
-                    is_timeout = isinstance(exc, requests.exceptions.ReadTimeout)  # type: ignore[attr-defined]
-                    is_conn_err = isinstance(exc, requests.exceptions.ConnectionError)  # type: ignore[attr-defined]
-                else:
-                    # Fallback heuristic by class name if requests import failed
-                    name = type(exc).__name__
-                    is_timeout = name == "ReadTimeout"
-                    is_conn_err = name == "ConnectionError"
-
-                if is_timeout or is_conn_err:
-                    last_exc = exc
-                    if attempt < self._upload_max_retries:
-                        sleep_s = self._upload_backoff_seconds * (2 ** (attempt - 1))
-                        logger.warning(
-                            f"Flickr upload attempt {attempt} failed ({type(exc).__name__}). "
-                            f"Retrying in {sleep_s:.1f}s..."
-                        )
-                        time.sleep(sleep_s)
-                        continue
-                    # Final attempt failed: break and raise a clear error below
-                    break
-                # Non-retryable error: re-raise immediately
-                raise
-        # If we exit loop without returning, retries were exhausted
-        raise RuntimeError(
-            f"Flickr upload failed after {self._upload_max_retries} attempts: {last_exc}"
-        ) from last_exc
-
     def upload_file(
         self,
         file_path: str,
@@ -347,8 +289,20 @@ class FlickrAPIClient:
         if hidden is not None:
             kwargs["hidden"] = int(hidden)
 
-        # Use retrying wrapper
-        resp = self._upload_with_retries(**kwargs)
+        # Retry upload with generic backoff helper
+        resp = retry_with_backoff(
+            lambda: flickr_api.upload(**kwargs),
+            max_attempts=self._upload_max_retries,
+            base_delay_s=self._upload_backoff_seconds,
+            logger=logger,
+            is_retryable=(
+                lambda e: (
+                    isinstance(e, requests.exceptions.ReadTimeout)  # type: ignore[attr-defined]
+                    or isinstance(e, requests.exceptions.ConnectionError)  # type: ignore[attr-defined]
+                )
+            ) if requests is not None else (lambda e: type(e).__name__ in ("ReadTimeout", "ConnectionError")),
+            on_retry="upload",
+        )
         return self._extract_photo_id(resp)
 
     def upload_bytes(
@@ -419,7 +373,7 @@ class FlickrAPIClient:
                     return str(v)
             return "" if v is None else str(v)
 
-        user_id = self._resolve_user_nsid()
+        user_id = self._user_nsid
         if not user_id:
             logger.warning("Could not resolve user NSID; returning empty list")
             return []
@@ -527,3 +481,108 @@ class FlickrAPIClient:
                 msg,
             )
             return
+
+    def iter_public_photos_date_range(
+        self,
+        start_date,
+        end_date,
+        *,
+        by: str = "uploaded",
+        per_page: int = 500,
+    ) -> Iterator[PhotoMetadata]:
+        """
+        Yield PhotoMetadata items for the authenticated user's public photos within a date range.
+        """
+        user_id = self._user_nsid
+
+        # Build base params
+        per_page = max(1, min(int(per_page), 500))
+        params: dict = {
+            "user_id": user_id,
+            "privacy_filter": 1,  # public only
+            "per_page": per_page,
+            "page": 1,
+        }
+
+        # Date filters
+        by = (by or "uploaded").strip().lower()
+        if by not in ("uploaded", "taken"):
+            raise ValueError('by must be "uploaded" or "taken"')
+        start_ts = to_epoch_seconds(start_date, end_of_day=False)
+        end_ts = to_epoch_seconds(end_date, end_of_day=True)
+        if start_ts > end_ts:
+            start_ts, end_ts = end_ts, start_ts
+
+        if by == "uploaded":
+            params["min_upload_date"] = start_ts
+            params["max_upload_date"] = end_ts
+        else:
+            params["min_taken_date"] = start_ts
+            params["max_taken_date"] = end_ts
+        from flickr_api import Person
+        while True:
+            # Retry getPhotos with generic backoff helper
+            try:
+                resp = retry_with_backoff(
+                    lambda: Person(id=user_id).getPhotos(**params),
+                    max_attempts=self._upload_max_retries,
+                    base_delay_s=self._upload_backoff_seconds,
+                    logger=logger,
+                    is_retryable=(
+                        lambda e: (
+                            isinstance(e, requests.exceptions.ReadTimeout)  # type: ignore[attr-defined]
+                            or isinstance(e, requests.exceptions.ConnectionError)  # type: ignore[attr-defined]
+                        )
+                    ) if requests is not None else (lambda e: type(e).__name__ in ("ReadTimeout", "ConnectionError")),
+                    on_retry="getPhotos",
+                )
+            except Exception as e:
+                logger.warning("Person(id=user).getPhotos() failed: %s", e, exc_info=False)
+                break
+
+            for item in resp:
+                # Retry getTags per item using generic backoff helper; on final failure, continue with empty tags
+                try:
+                    tags = retry_with_backoff(
+                        lambda: item.getTags(),
+                        max_attempts=self._upload_max_retries,
+                        base_delay_s=self._upload_backoff_seconds,
+                        logger=logger,
+                        is_retryable=(
+                            lambda e: (
+                                isinstance(e, requests.exceptions.ReadTimeout)  # type: ignore[attr-defined]
+                                or isinstance(e, requests.exceptions.ConnectionError)  # type: ignore[attr-defined]
+                            )
+                        ) if requests is not None else (lambda e: type(e).__name__ in ("ReadTimeout", "ConnectionError")),
+                        on_retry=f"getTags photo {getattr(item, 'id', '?')}",
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "getTags failed for photo %s: %s",
+                        getattr(item, "id", "?"),
+                        e,
+                        exc_info=False,
+                    )
+                    tags = []
+                raw_tags = [
+                    (t.raw.decode("utf-8", "ignore") if isinstance(t.raw, (bytes, bytearray)) else str(t.raw)).strip()
+                    for t in tags
+                    if getattr(t, "raw", None)
+                ]
+                yield PhotoMetadata(
+                    id=str(item.id),
+                    title=item.title,
+                    description=item.description,
+                    tags=raw_tags,
+                    date_uploaded=(
+                        datetime.fromtimestamp(int(item.dateuploaded), tz=timezone.utc)
+                        if getattr(item, "dateuploaded", None) not in (None, "", 0)
+                        else None
+                    ),
+                )
+            current_page = getattr(resp.info, "page", params.get("page", 1))
+            total_pages = getattr(resp.info, "pages", current_page)
+            if not resp or current_page >= total_pages:
+                break
+            params["page"] = current_page + 1
+
