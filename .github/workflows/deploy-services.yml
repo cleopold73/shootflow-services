@@ -175,9 +175,9 @@ jobs:
         working-directory: infra-repo
         run: |
           set -euo pipefail
-          mkdir -p shootflow-infra
-          printf "%s\n" "${IMAGE_URI}" > shootflow-infra/image_uri.txt
-          echo "Wrote IMAGE_URI to shootflow-infra/image_uri.txt"
+          mkdir -p shootflow_infra
+          printf "%s\n" "${IMAGE_URI}" > shootflow_infra/image_uri.txt
+          echo "Wrote IMAGE_URI to shootflow_infra/image_uri.txt"
 
       - name: Commit and push update to infra repo
         shell: bash
@@ -188,9 +188,11 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Mask the 12-digit AWS account ID at the start of the IMAGE_URI for the commit message
+          MASKED_IMAGE_URI="$(echo "${IMAGE_URI}" | sed -E 's#^[0-9]{12}#************#')"
           if [[ -n "$(git status --porcelain)" ]]; then
-            git add shootflow-infra/image_uri.txt
-            git commit -m "chore: update image_uri.txt to ${IMAGE_URI} (source: ${CI_COMMIT_SHA})"
+            git add shootflow_infra/image_uri.txt
+            git commit -m "chore: update image_uri.txt to ${MASKED_IMAGE_URI} (source: ${CI_COMMIT_SHA})"
             git push origin HEAD:main
           else
             echo "No changes to commit."
