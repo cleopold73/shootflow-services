@@ -75,32 +75,33 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Mark as posted in DynamoDB
         _repo.mark_posted(photo_id, flickr_photo_id=flickr_id)
 
-        # Optionally pick Flickr groups for this photo and add it to the selected groups
-        try:
-            groups: List[str] = []
-            static_ids = settings.FLICKR_STATIC_GROUP_IDS
-            if static_ids:
-                groups = [str(g).strip() for g in static_ids if str(g).strip()]
-            elif settings.FLICKR_GROUPS_VIA_LLM_ENABLED:
-                groups = suggest_groups_via_llm(item, flickr_client=client, settings=settings)
+        # Optionally pick Flickr groups for this photo and add it to the selected groups only if posting is public
+        if settings.FLICKR_UPLOAD_PUBLIC:
+            try:
+                groups: List[str] = []
+                static_ids = settings.FLICKR_STATIC_GROUP_IDS
+                if static_ids:
+                    groups = [str(g).strip() for g in static_ids if str(g).strip()]
+                elif settings.FLICKR_GROUPS_VIA_LLM_ENABLED:
+                    groups = suggest_groups_via_llm(item, flickr_client=client, settings=settings)
 
-            if groups:
-                metrics.count("FlickrGroupsSuggested", float(len(groups)))
-                logger.info(f"flickr_groups_selected photoId={photo_id} groups={groups}")
-                # Attempt to add the newly uploaded photo to each selected group (best effort)
-                try:
-                    added = 0
-                    for gid in groups:
-                        client.add_photo_to_group(flickr_id, gid)
-                        added += 1
-                    if added:
-                        metrics.count("FlickrGroupsAdded", float(added))
-                        logger.info(f"flickr_groups_added photoId={photo_id} added={added}")
-                except Exception as ae:
-                    logger.warning(f"flickr_groups_add_failed photoId={photo_id} error={ae}", exc_info=True)
-        except Exception as ge:
-            # Do not fail the posting flow on group selection errors
-            logger.warning(f"group_selection_failed photoId={photo_id} error={ge}", exc_info=True)
+                if groups:
+                    metrics.count("FlickrGroupsSuggested", float(len(groups)))
+                    logger.info(f"flickr_groups_selected photoId={photo_id} groups={groups}")
+                    # Attempt to add the newly uploaded photo to each selected group (best effort)
+                    try:
+                        added = 0
+                        for gid in groups:
+                            client.add_photo_to_group(flickr_id, gid)
+                            added += 1
+                        if added:
+                            metrics.count("FlickrGroupsAdded", float(added))
+                            logger.info(f"flickr_groups_added photoId={photo_id} added={added}")
+                    except Exception as ae:
+                        logger.warning(f"flickr_groups_add_failed photoId={photo_id} error={ae}", exc_info=True)
+            except Exception as ge:
+                # Do not fail the posting flow on group selection errors
+                logger.warning(f"group_selection_failed photoId={photo_id} error={ge}", exc_info=True)
 
         metrics.count("FlickrPosted", 1.0)
         logger.info(f"flickr_post_succeeded photoId={photo_id} flickr_id={flickr_id} s3_key={s3_key}")

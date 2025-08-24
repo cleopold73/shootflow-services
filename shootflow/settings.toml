@@ -49,7 +49,8 @@ S3_INGEST_READY_PREFIX = "ready/"
 
 [development]
 # overrides for dev
-FLICKR_GROUPS_DRY_RUN_ENABLED = true
+FLICKR_GROUPS_DRY_RUN_ENABLED = false
+FLICKR_UPLOAD_PUBLIC = false
 
 [production]
 # Production-specific overrides (if any)
