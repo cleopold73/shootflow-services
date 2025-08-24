@@ -162,16 +162,36 @@ jobs:
           IMAGE_URI="${REGISTRY}/${REPO}@${DIGEST}"
           echo "IMAGE_URI=${IMAGE_URI}" | tee -a "$GITHUB_ENV"
 
-      - name: Trigger infra deployment workflow
-        uses: peter-evans/repository-dispatch@v3
+      - name: Checkout infra repository
+        uses: actions/checkout@v4
         with:
-          token: ${{ secrets.INFRA_REPO_PAT }}   # Fine-scoped token or GitHub App installation token
           repository: cleopold73/shootflow-infra
-          event-type: deploy-lambda
-          client-payload: |
-            {
-              "image_uri": "${{ env.IMAGE_URI }}",
-              "service": "shootflow-services",
-              "commit": "${{ github.sha }}",
-              "environment": "prod"
-            }
+          token: ${{ secrets.INFRA_REPO_PAT }}
+          ref: main
+          path: infra-repo
+
+      - name: Update image URI file
+        shell: bash
+        working-directory: infra-repo
+        run: |
+          set -euo pipefail
+          mkdir -p shootflow-infra
+          printf "%s\n" "${IMAGE_URI}" > shootflow-infra/image_uri.txt
+          echo "Wrote IMAGE_URI to shootflow-infra/image_uri.txt"
+
+      - name: Commit and push update to infra repo
+        shell: bash
+        working-directory: infra-repo
+        env:
+          CI_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git add shootflow-infra/image_uri.txt
+            git commit -m "chore: update image_uri.txt to ${IMAGE_URI} (source: ${CI_COMMIT_SHA})"
+            git push origin HEAD:main
+          else
+            echo "No changes to commit."
+          fi
