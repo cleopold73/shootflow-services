@@ -142,7 +142,7 @@ jobs:
       - name: Configure AWS credentials (for account ID)
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          role-to-assume: arn:aws:iam::477763023369:role/ShootflowInfraStack-ShootflowEcrPublishRoleD613A83B-ck4os4eAt1k0
+          role-to-assume: arn:aws:iam::477763023369:role/ShootflowEcrStack-ShootflowEcrPublishRoleD613A83B-LPewO8BcbbSr
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Compute immutable IMAGE_URI from digest

@@ -45,10 +45,9 @@ S3_INGEST_SORT_KEY_METADATA = "METADATA"
 S3_INGEST_READY_PREFIX = "ready/"
 
 [development]
-# Example overrides for dev
-DDB_TABLE = "ShootflowInfraStack-ShootFlowPhotoMetadataD918DE39-36NG2C1D5J36"
-S3_BUCKET = "shootflowupload"
+# overrides for dev
+FLICKR_GROUPS_DRY_RUN_ENABLED = true
 
 [production]
 # Production-specific overrides (if any)
-DDB_TABLE = "shootflow-db"
+
