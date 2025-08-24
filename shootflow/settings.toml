@@ -44,6 +44,9 @@ S3_INGEST_PARTITION_PREFIX = "PHOTO#"
 S3_INGEST_SORT_KEY_METADATA = "METADATA"
 S3_INGEST_READY_PREFIX = "ready/"
 
+[unittest]
+# overrides for Unit Tests
+
 [development]
 # overrides for dev
 FLICKR_GROUPS_DRY_RUN_ENABLED = true

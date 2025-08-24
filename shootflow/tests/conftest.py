@@ -5,10 +5,14 @@ import tempfile
 import json
 import types
 import sys
+import os
 from typing import Any, Callable, Dict, Optional
 
 import pytest
 
+# Ensure Dynaconf selects the 'unittest' environment during pytest runs.
+# Using setdefault avoids overriding if a specific env is intentionally provided.
+os.environ.setdefault("ENV_FOR_DYNACONF", "unittest")
 
 class StreamingBody:
     """Simple read()-compatible stream similar to S3 Body."""
