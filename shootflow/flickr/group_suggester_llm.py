@@ -154,11 +154,14 @@ def suggest_groups_via_llm(
     model = settings.OPENAI_CHAT_MODEL
     max_return = settings.LLM_MAX_GROUPS
     max_candidates = settings.LLM_MAX_CANDIDATE_GROUPS
-    # Read required HTTP tuning values from settings (no in-code defaults, no casting)
     connect_timeout_s = settings.LLM_HTTP_CONNECT_TIMEOUT_SECONDS
     read_timeout_s = settings.LLM_HTTP_READ_TIMEOUT_SECONDS
     max_retries = settings.LLM_HTTP_RETRIES
     backoff_base_s = settings.LLM_HTTP_BACKOFF_BASE_SECONDS
+    name_max = settings.LLM_GROUP_NAME_MAX_LEN
+    desc_max = settings.LLM_GROUP_DESC_MAX_LEN
+    title_max = settings.LLM_TITLE_MAX_LEN
+    caption_max = settings.LLM_CAPTION_MAX_LEN
 
     client = flickr_client or FlickrAPIClient()
     groups = client.list_member_groups(include_descriptions=True, max_groups=max_candidates)
@@ -169,12 +172,12 @@ def suggest_groups_via_llm(
         gid = str(g.get("id") or "").strip()
         if not gid:
             continue
-        name = _truncate(g.get("name"), 120)
-        desc = _truncate(g.get("description"), 400)
+        name = _truncate(g.get("name"), name_max)
+        desc = _truncate(g.get("description"), desc_max)
         candidates.append({"id": gid, "name": name, "description": desc})
 
-    title = _truncate(photo_item.get("title"), 200)
-    caption = _truncate(photo_item.get("caption"), 800)
+    title = _truncate(photo_item.get("title"), title_max)
+    caption = _truncate(photo_item.get("caption"), caption_max)
     tags = [str(t).strip() for t in (photo_item.get("tags") or []) if str(t).strip()]
 
     system_msg = (
