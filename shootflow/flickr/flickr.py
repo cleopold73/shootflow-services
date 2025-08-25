@@ -674,3 +674,22 @@ class FlickrAPIClient:
         scale = settings.FLICKR_SCORE_SCALE
         return float(photo_score) * scale
 
+    def get_download_url(self, flickr_id):
+        from flickr_api import Photo
+        photo = Photo(user_id=self._user_nsid, id=flickr_id)
+
+        def _is_retryable(e: Exception) -> bool:
+            if requests is not None:
+                return isinstance(e, requests.exceptions.ReadTimeout) or isinstance(e, requests.exceptions.ConnectionError)  # type: ignore[attr-defined]
+            return type(e).__name__ in ("ReadTimeout", "ConnectionError")
+
+        photo_url = retry_with_backoff(
+            lambda: photo.getPhotoFile(size_label='Original'),
+            max_attempts=self._upload_max_retries,
+            base_delay_s=self._upload_backoff_seconds,
+            logger=logger,
+            is_retryable=_is_retryable,
+            on_retry=f"getPhotoFile {flickr_id}",
+        )
+        return photo_url
+

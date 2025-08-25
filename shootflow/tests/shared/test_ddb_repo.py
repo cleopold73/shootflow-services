@@ -395,3 +395,74 @@ def test_put_photo_item_omits_posted_fields_when_not_provided(fake_ddb_factory):
     assert item["status"]["S"] == "READY"
     assert "posted_at" not in item
     assert "flickr_photo_id" not in item
+
+
+def test_get_photo_with_highest_flickr_score_returns_best(fake_ddb_factory, monkeypatch):
+    settings.DDB_TABLE = "tbl"
+    settings.AWS_REGION = "us-east-1"
+
+    fake_ddb = fake_ddb_factory("success")
+    repo = PhotoRepository(ddb_client=fake_ddb)
+
+    # Two-page scan: includes some items without scores and one with the max
+    page1 = {
+        "Items": [
+            {"photoId": {"S": "p1"}, "flickr_photo_id": {"S": "fl1"}, "flickr_score": {"N": "10.5"}},
+            {"photoId": {"S": "p2"}, "flickr_photo_id": {"S": "fl2"}},  # missing score
+        ],
+        "LastEvaluatedKey": {"photoId": {"S": "p2"}},
+    }
+    page2 = {
+        "Items": [
+            {"photoId": {"S": "p3"}, "flickr_photo_id": {"S": "fl3"}, "flickr_score": {"N": "99.9"}},
+            {"photoId": {"S": "p4"}, "flickr_photo_id": {"S": "fl4"}, "flickr_score": {"N": "42"}},
+        ]
+    }
+    scans = [page1, page2]
+    state = {"i": 0}
+
+    def scan(**kwargs):
+        idx = state["i"]
+        state["i"] += 1
+        return scans[idx]
+
+    monkeypatch.setattr(fake_ddb, "scan", scan, raising=False)
+
+    got = repo.get_photo_with_highest_flickr_score()
+    assert got == ("p3", "fl3")
+
+
+def test_get_photo_with_highest_flickr_score_none_when_no_scores(fake_ddb_factory, monkeypatch):
+    settings.DDB_TABLE = "tbl"
+    settings.AWS_REGION = "us-east-1"
+
+    fake_ddb = fake_ddb_factory("success")
+    repo = PhotoRepository(ddb_client=fake_ddb)
+
+    # Only items without proper scores or ids
+    page = {"Items": [{"photoId": {"S": "p1"}}, {"flickr_photo_id": {"S": "fl2"}}]}
+    monkeypatch.setattr(fake_ddb, "scan", lambda **kwargs: page, raising=False)
+
+    got = repo.get_photo_with_highest_flickr_score()
+    assert got is None
+
+
+def test_get_photo_with_highest_flickr_score_skips_instagram_posted(fake_ddb_factory, monkeypatch):
+    settings.DDB_TABLE = "tbl"
+    settings.AWS_REGION = "us-east-1"
+
+    fake_ddb = fake_ddb_factory("success")
+    repo = PhotoRepository(ddb_client=fake_ddb)
+
+    # Highest score is p1 but it's marked instagram_posted=POSTED; should return p2
+    page = {
+        "Items": [
+            {"photoId": {"S": "p1"}, "flickr_photo_id": {"S": "fl1"}, "flickr_score": {"N": "200.0"}, "instagram_posted": {"S": "POSTED"}},
+            {"photoId": {"S": "p2"}, "flickr_photo_id": {"S": "fl2"}, "flickr_score": {"N": "150.0"}},
+            {"photoId": {"S": "p3"}, "flickr_photo_id": {"S": "fl3"}, "flickr_score": {"N": "50.0"}, "instagram_posted": {"S": "DRAFT"}},
+        ]
+    }
+    monkeypatch.setattr(fake_ddb, "scan", lambda **kwargs: page, raising=False)
+
+    got = repo.get_photo_with_highest_flickr_score()
+    assert got == ("p2", "fl2")

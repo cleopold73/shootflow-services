@@ -21,3 +21,6 @@ coverage = "^7.10.4"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+sf-instagram = "shootflow.tools.get_instagram:main"

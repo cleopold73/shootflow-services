@@ -167,6 +167,17 @@ class PhotoRepository:
             ConditionExpression="attribute_exists(photoId)",
         )
 
+    def update_instagram_posted(self, photoId: str, instagram_posted: str) -> None:
+        self.ddb.update_item(
+            TableName=self.table_name,
+            Key={"photoId": {"S": photoId}},
+            UpdateExpression="SET instagram_posted = :instagram_posted",
+            ExpressionAttributeValues={
+                ":instagram_posted": {"S": str(instagram_posted)},
+            },
+            ConditionExpression="attribute_exists(photoId)",
+        )
+
     def iter_all_flickr_photo_ids(self, *, page_limit: int = 1000) -> Iterator[Tuple[str, str]]:
         """
         Iterate over all items yielding (photoId, flickr_photo_id) tuples.
@@ -195,6 +206,58 @@ class PhotoRepository:
             exclusive_start_key = resp.get("LastEvaluatedKey")
             if not exclusive_start_key:
                 break
+
+    def get_photo_with_highest_flickr_score(self, *, page_limit: int = 1000) -> Optional[Tuple[str, str]]:
+        """
+        Scan the table and return (photoId, flickr_photo_id) for the item with the highest flickr_score.
+        Excludes items where instagram_posted == "POSTED". If the field is missing or has any other value, the item is eligible.
+        Returns None if no eligible items have a score and required attributes.
+        """
+        best_pid: Optional[str] = None
+        best_fid: Optional[str] = None
+        best_score: Optional[float] = None
+
+        exclusive_start_key: Optional[Dict[str, Any]] = None
+        while True:
+            kwargs: Dict[str, Any] = {
+                "TableName": self.table_name,
+                "ProjectionExpression": "photoId, flickr_photo_id, flickr_score, instagram_posted",
+                "Limit": int(page_limit),
+            }
+            if exclusive_start_key:
+                kwargs["ExclusiveStartKey"] = exclusive_start_key
+
+            resp = self.ddb.scan(**kwargs)
+            for it in resp.get("Items", []):
+                # Skip if instagram_posted is explicitly "POSTED"
+                ip = it.get("instagram_posted")
+                if isinstance(ip, dict) and ip.get("S") == "POSTED":
+                    continue
+
+                pid = it.get("photoId")
+                fid = it.get("flickr_photo_id")
+                score_attr = it.get("flickr_score")
+                if (
+                    isinstance(pid, dict) and "S" in pid and pid["S"]
+                    and isinstance(fid, dict) and "S" in fid and fid["S"]
+                    and isinstance(score_attr, dict) and "N" in score_attr
+                ):
+                    try:
+                        score_val = float(score_attr["N"])
+                    except Exception:
+                        continue
+                    if best_score is None or score_val > best_score:
+                        best_score = score_val
+                        best_pid = pid["S"]
+                        best_fid = fid["S"]
+
+            exclusive_start_key = resp.get("LastEvaluatedKey")
+            if not exclusive_start_key:
+                break
+
+        if best_pid and best_fid:
+            return best_pid, best_fid
+        return None
 
     @staticmethod
     def _deserialize_item(item: Dict[str, Any]) -> Dict[str, Any]:

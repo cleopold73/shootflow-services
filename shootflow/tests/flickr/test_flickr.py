@@ -421,6 +421,68 @@ def test_iter_public_paginates_two_pages(flickr_test_env, monkeypatch):
     assert got[1].date_uploaded == datetime.fromtimestamp(epoch2, tz=timezone.utc)
 
 
+def test_get_download_url_retries_then_returns(flickr_test_env, monkeypatch):
+    # Use fixture-provided exception classes to drive retry logic
+    ReadTimeout = flickr_test_env["ReadTimeout"]
+    ConnectionError = flickr_test_env["ConnectionError"]
+
+    # Patch the module's requests reference so isinstance checks work
+    exc_ns = types.SimpleNamespace(ReadTimeout=ReadTimeout, ConnectionError=ConnectionError)
+    req_obj = types.SimpleNamespace(exceptions=exc_ns)
+    monkeypatch.setattr(flickr_mod, "requests", req_obj, raising=False)
+
+    # Stub flickr_api.Photo.getPhotoFile to fail once, then return URL
+    import sys
+
+    calls = {"n": 0}
+    url = "https://live.staticflickr.com/path/original.jpg"
+
+    class _Photo:
+        def __init__(self, user_id, id):
+            self.user_id = user_id
+            self.id = id
+
+        def getPhotoFile(self, size_label="Original"):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ReadTimeout("rt")
+            return url
+
+    monkeypatch.setattr(sys.modules["flickr_api"], "Photo", _Photo, raising=False)
+
+    c = FlickrAPIClient()
+    got = c.get_download_url("fid-123")
+    assert got == url
+    assert calls["n"] == 2  # one retry
+
+
+def test_get_download_url_nonretryable_error_bubbles(flickr_test_env, monkeypatch):
+    # Patch requests for completeness (won't matter for generic Exception)
+    ReadTimeout = flickr_test_env["ReadTimeout"]
+    ConnectionError = flickr_test_env["ConnectionError"]
+
+    exc_ns = types.SimpleNamespace(ReadTimeout=ReadTimeout, ConnectionError=ConnectionError)
+    req_obj = types.SimpleNamespace(exceptions=exc_ns)
+    monkeypatch.setattr(flickr_mod, "requests", req_obj, raising=False)
+
+    # Stub flickr_api.Photo.getPhotoFile to raise a generic error (non-retryable)
+    import sys
+
+    class _Photo:
+        def __init__(self, user_id, id):
+            self.user_id = user_id
+            self.id = id
+
+        def getPhotoFile(self, size_label="Original"):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(sys.modules["flickr_api"], "Photo", _Photo, raising=False)
+
+    c = FlickrAPIClient()
+    with pytest.raises(RuntimeError):
+        c.get_download_url("fid-err")
+
+
 # ---- get_photo_score tests ----
 
 def _install_photo_stub(monkeypatch, data_by_id):
