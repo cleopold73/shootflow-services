@@ -7,6 +7,7 @@ import tempfile
 from typing import Iterable, Optional, Iterator
 import logging
 import time
+import math
 from datetime import datetime, timezone
 from dataclasses import dataclass
 
@@ -585,4 +586,91 @@ class FlickrAPIClient:
             if not resp or current_page >= total_pages:
                 break
             params["page"] = current_page + 1
+
+    def get_photo_score(self, flickr_id):
+        from flickr_api import Photo
+        photo = Photo(user_id=self._user_nsid, id=flickr_id)
+
+        def _is_retryable(e: Exception) -> bool:
+            if requests is not None:
+                return isinstance(e, requests.exceptions.ReadTimeout) or isinstance(e, requests.exceptions.ConnectionError)  # type: ignore[attr-defined]
+            return type(e).__name__ in ("ReadTimeout", "ConnectionError")
+
+        favs = retry_with_backoff(
+            lambda: photo.getFavorites(),
+            max_attempts=self._upload_max_retries,
+            base_delay_s=self._upload_backoff_seconds,
+            logger=logger,
+            is_retryable=_is_retryable,
+            on_retry=f"getFavorites {flickr_id}",
+        )
+        favorite_count = getattr(getattr(favs, "info", None), "total", 0)
+
+        comments = retry_with_backoff(
+            lambda: photo.getComments(),
+            max_attempts=self._upload_max_retries,
+            base_delay_s=self._upload_backoff_seconds,
+            logger=logger,
+            is_retryable=_is_retryable,
+            on_retry=f"getComments {flickr_id}",
+        )
+        comments_count = len(comments or [])
+
+        photo_info = retry_with_backoff(
+            lambda: photo.getInfo(),
+            max_attempts=self._upload_max_retries,
+            base_delay_s=self._upload_backoff_seconds,
+            logger=logger,
+            is_retryable=_is_retryable,
+            on_retry=f"getInfo {flickr_id}",
+        )
+        # Safe coercions
+        try:
+            views_count = int(photo_info.get("views", 0))
+        except Exception:
+            views_count = 0
+
+        try:
+            uploaded_epoch = int(photo_info.get("dateuploaded", 0))
+        except Exception:
+            uploaded_epoch = 0
+
+        dt = datetime.fromtimestamp(uploaded_epoch, tz=timezone.utc) if uploaded_epoch else datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=timezone.utc)
+        hours_ago = max(1.0, (now - dt).total_seconds() / 3600.0)  # floor to 1h to avoid division spikes
+
+        # Ensure counts are non-negative ints
+        try:
+            favorite_count = int(favorite_count)
+        except Exception:
+            favorite_count = 0
+        comments_count = max(0, int(comments_count))
+        views_count = max(0, int(views_count))
+
+        # Hyperparameters (required via settings)
+        w_fav = settings.FLICKR_SCORE_W_FAV
+        w_com = settings.FLICKR_SCORE_W_COM
+        w_view = settings.FLICKR_SCORE_W_VIEW
+        alpha = settings.FLICKR_SCORE_BAYES_ALPHA
+        beta = settings.FLICKR_SCORE_BAYES_BETA
+        half_life = settings.FLICKR_SCORE_HALF_LIFE_HOURS
+
+        # Sublinear scaling of signals
+        raw = (
+            w_fav * math.sqrt(float(favorite_count))
+            + w_com * math.sqrt(float(comments_count))
+            + w_view * math.log1p(float(views_count))
+        )
+
+        # Engagement smoothing (clamped to avoid extremes)
+        engagement = (favorite_count + 2.0 * comments_count + alpha) / (views_count + beta)
+        engagement = max(0.1, min(3.0, engagement))
+
+        # Smooth time decay with half-life
+        time_decay = 1.0 if half_life <= 0 else math.exp(-math.log(2.0) * (hours_ago / half_life))
+
+        photo_score = raw * engagement * time_decay
+        # Scale score to avoid extremely tiny magnitudes causing DynamoDB underflow
+        scale = settings.FLICKR_SCORE_SCALE
+        return float(photo_score) * scale
 

@@ -4,7 +4,7 @@ import json
 import logging
 import secrets
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Iterator
 
 import boto3
 from botocore.exceptions import ClientError
@@ -154,6 +154,47 @@ class PhotoRepository:
             },
             ConditionExpression="attribute_exists(photoId)",
         )
+
+    def update_flickr_score(self, photoId: str, flickr_score: float) -> None:
+        score_num = float(flickr_score)
+        self.ddb.update_item(
+            TableName=self.table_name,
+            Key={"photoId": {"S": photoId}},
+            UpdateExpression="SET flickr_score = :flickr_score",
+            ExpressionAttributeValues={
+                ":flickr_score": {"N": str(score_num)},
+            },
+            ConditionExpression="attribute_exists(photoId)",
+        )
+
+    def iter_all_flickr_photo_ids(self, *, page_limit: int = 1000) -> Iterator[Tuple[str, str]]:
+        """
+        Iterate over all items yielding (photoId, flickr_photo_id) tuples.
+        Uses a paginated Scan with a projection to minimize IO.
+        """
+        exclusive_start_key: Optional[Dict[str, Any]] = None
+        while True:
+            kwargs: Dict[str, Any] = {
+                "TableName": self.table_name,
+                "ProjectionExpression": "photoId, flickr_photo_id",
+                "Limit": int(page_limit),
+            }
+            if exclusive_start_key:
+                kwargs["ExclusiveStartKey"] = exclusive_start_key
+
+            resp = self.ddb.scan(**kwargs)
+            for it in resp.get("Items", []):
+                pid = it.get("photoId")
+                fid = it.get("flickr_photo_id")
+                if (
+                    isinstance(pid, dict) and "S" in pid and pid["S"]
+                    and isinstance(fid, dict) and "S" in fid and fid["S"]
+                ):
+                    yield pid["S"], fid["S"]
+
+            exclusive_start_key = resp.get("LastEvaluatedKey")
+            if not exclusive_start_key:
+                break
 
     @staticmethod
     def _deserialize_item(item: Dict[str, Any]) -> Dict[str, Any]:

@@ -419,3 +419,152 @@ def test_iter_public_paginates_two_pages(flickr_test_env, monkeypatch):
     assert [x.id for x in got] == ["p1", "p2"]
     assert got[0].date_uploaded == datetime.fromtimestamp(epoch1, tz=timezone.utc)
     assert got[1].date_uploaded == datetime.fromtimestamp(epoch2, tz=timezone.utc)
+
+
+# ---- get_photo_score tests ----
+
+def _install_photo_stub(monkeypatch, data_by_id):
+    """
+    Install a flickr_api.Photo stub that returns favorites/comments/info from data_by_id.
+    data_by_id: {photo_id: {"favorites": int, "comments": int, "views": int, "dateuploaded": int}}
+    """
+    mod = sys.modules["flickr_api"]
+    import types
+
+    class Photo:
+        def __init__(self, user_id, id):
+            self._data = data_by_id[str(id)]
+
+        def getFavorites(self):
+            return types.SimpleNamespace(info=types.SimpleNamespace(total=int(self._data.get("favorites", 0))))
+
+        def getComments(self):
+            return [None] * int(self._data.get("comments", 0))
+
+        def getInfo(self):
+            return {
+                "views": int(self._data.get("views", 0)),
+                "dateuploaded": int(self._data.get("dateuploaded", 0)),
+            }
+
+    monkeypatch.setattr(mod, "Photo", Photo, raising=False)
+
+
+def _freeze_now(monkeypatch, fixed_now):
+    """
+    Freeze flickr module's datetime.now to a fixed timezone-aware datetime.
+    """
+    # Keep original module-level datetime for fromtimestamp
+    orig_datetime = flickr_mod.datetime
+
+    class _DT:
+        @staticmethod
+        def fromtimestamp(ts, tz=None):
+            return orig_datetime.fromtimestamp(ts, tz=tz)
+
+        @staticmethod
+        def now(tz=None):
+            return fixed_now
+
+    monkeypatch.setattr(flickr_mod, "datetime", _DT, raising=False)
+
+
+def test_get_photo_score_prefers_recency(flickr_test_env, monkeypatch):
+    # Configure scoring hyperparameters explicitly for deterministic behavior
+    settings.FLICKR_SCORE_W_FAV = 3.0
+    settings.FLICKR_SCORE_W_COM = 4.0
+    settings.FLICKR_SCORE_W_VIEW = 1.0
+    settings.FLICKR_SCORE_BAYES_ALPHA = 5.0
+    settings.FLICKR_SCORE_BAYES_BETA = 200.0
+    settings.FLICKR_SCORE_HALF_LIFE_HOURS = 48.0
+
+    # Freeze "now"
+    fixed_now = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    _freeze_now(monkeypatch, fixed_now)
+
+    # Prepare two photos with identical counts, different ages
+    p_new = "n1"
+    p_old = "o1"
+    one_hour_ago = int((fixed_now.timestamp()) - 1 * 3600)
+    seventy_two_hours_ago = int((fixed_now.timestamp()) - 72 * 3600)
+
+    _install_photo_stub(
+        monkeypatch,
+        {
+            p_new: {"favorites": 10, "comments": 3, "views": 100, "dateuploaded": one_hour_ago},
+            p_old: {"favorites": 10, "comments": 3, "views": 100, "dateuploaded": seventy_two_hours_ago},
+        },
+    )
+
+    c = FlickrAPIClient()
+    s_new = c.get_photo_score(p_new)
+    s_old = c.get_photo_score(p_old)
+
+    assert s_new > s_old  # newer should score higher due to decay
+
+
+def test_get_photo_score_engagement_influence(flickr_test_env, monkeypatch):
+    # Keep decay stable by freezing time; both photos same age
+    fixed_now = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    _freeze_now(monkeypatch, fixed_now)
+
+    # Hyperparameters
+    settings.FLICKR_SCORE_W_FAV = 3.0
+    settings.FLICKR_SCORE_W_COM = 4.0
+    settings.FLICKR_SCORE_W_VIEW = 1.0
+    settings.FLICKR_SCORE_BAYES_ALPHA = 5.0
+    settings.FLICKR_SCORE_BAYES_BETA = 200.0
+    settings.FLICKR_SCORE_HALF_LIFE_HOURS = 72.0
+
+    epoch_same = int(fixed_now.timestamp() - 6 * 3600)
+    pid_lo = "lo"
+    pid_hi = "hi"
+
+    # Same views, different engagement
+    _install_photo_stub(
+        monkeypatch,
+        {
+            pid_lo: {"favorites": 2, "comments": 0, "views": 200, "dateuploaded": epoch_same},
+            pid_hi: {"favorites": 20, "comments": 10, "views": 200, "dateuploaded": epoch_same},
+        },
+    )
+
+    c = FlickrAPIClient()
+    score_lo = c.get_photo_score(pid_lo)
+    score_hi = c.get_photo_score(pid_hi)
+
+    assert score_hi > score_lo  # better engagement should result in a higher score
+
+
+def test_get_photo_score_views_sublinear(flickr_test_env, monkeypatch):
+    fixed_now = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    _freeze_now(monkeypatch, fixed_now)
+
+    # Hyperparameters
+    settings.FLICKR_SCORE_W_FAV = 3.0
+    settings.FLICKR_SCORE_W_COM = 4.0
+    settings.FLICKR_SCORE_W_VIEW = 1.0
+    settings.FLICKR_SCORE_BAYES_ALPHA = 5.0
+    settings.FLICKR_SCORE_BAYES_BETA = 200.0
+    settings.FLICKR_SCORE_HALF_LIFE_HOURS = 72.0
+
+    epoch_same = int(fixed_now.timestamp() - 12 * 3600)
+    pid_a = "a"
+    pid_b = "b"
+
+    # Same engagement, views differ by 10x
+    _install_photo_stub(
+        monkeypatch,
+        {
+            pid_a: {"favorites": 10, "comments": 5, "views": 100, "dateuploaded": epoch_same},
+            pid_b: {"favorites": 10, "comments": 5, "views": 1000, "dateuploaded": epoch_same},
+        },
+    )
+
+    c = FlickrAPIClient()
+    score_a = c.get_photo_score(pid_a)
+    score_b = c.get_photo_score(pid_b)
+
+    # More views should increase score, but sublinearly (far less than 10x)
+    assert score_b > score_a
+    assert (score_b / max(score_a, 1e-9)) < 4.0

@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional
 
 from shootflow.flickr import FlickrAPIClient
 from shootflow.shared.ddb_repo import PhotoRepository
-from shootflow.shared.logger import setup_basic_logging
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +25,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
       - by: "uploaded" or "taken" (default: "uploaded")
       - per_page: int (default: 500)
     """
-    setup_basic_logging()
     start_date: Optional[Any] = event.get("start_date")
     end_date: Optional[Any] = event.get("end_date")
     by: str = (event.get("by") or "uploaded").strip().lower()

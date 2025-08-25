@@ -5,10 +5,11 @@ import json
 import logging
 import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from shootflow.shared.logger import setup_basic_logging
+
 
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    logging.basicConfig(level=logging.INFO)
+
 
 
 def _load_target(entry: str) -> Callable[[Dict[str, Any], Any], Any]:
@@ -153,6 +154,7 @@ def handler(event: Dict[str, Any], context: Any) -> Any:
 
     The adapter shapes input to the target and formats the output as required by the event source.
     """
+    setup_basic_logging()
     target_entry = os.getenv("LAMBDA_TARGET")
     if not target_entry:
         raise RuntimeError("LAMBDA_TARGET is required (format 'module.path:function')")

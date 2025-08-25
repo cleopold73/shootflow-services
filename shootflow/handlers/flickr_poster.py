@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional
 
 from shootflow.shared.config import settings
 from shootflow.shared.metrics import metrics
-from shootflow.shared.logger import setup_basic_logging
 from shootflow.shared.ddb_repo import PhotoRepository
 from shootflow.shared.s3 import S3Storage
 from shootflow.flickr import FlickrAPIClient  # uses Secrets Manager under the hood
@@ -23,7 +22,6 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     uploads it to Flickr, then marks it as POSTED.
     """
     logger.info("flickr_poster_start")
-    setup_basic_logging()
 
     client = FlickrAPIClient()
 
