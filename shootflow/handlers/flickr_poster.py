@@ -6,6 +6,7 @@ from shootflow.shared.config import settings
 from shootflow.shared.metrics import metrics
 from shootflow.shared.ddb_repo import PhotoRepository
 from shootflow.shared.s3 import S3Storage
+from shootflow.shared.logger import setup_basic_logging
 from shootflow.flickr import FlickrAPIClient  # uses Secrets Manager under the hood
 from shootflow.flickr import suggest_groups_via_llm
 
@@ -21,6 +22,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Picks one random READY item from DynamoDB, downloads the image from S3,
     uploads it to Flickr, then marks it as POSTED.
     """
+    setup_basic_logging()
     logger.info("flickr_poster_start")
 
     client = FlickrAPIClient()

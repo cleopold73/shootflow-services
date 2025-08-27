@@ -35,6 +35,7 @@ def test_success_single_record_streams_exif_puts_and_cleans(
         tags=["t1", "t2"],
         gps={"lat": 1.23, "lon": 4.56},
         exif={"foo": "bar"},
+        raw_meta={"foo": "bar"},
     )
 
     # Fake repo to capture put_photo_item

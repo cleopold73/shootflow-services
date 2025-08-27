@@ -62,7 +62,7 @@ def _ingest_single_record(bucket: str, key: str) -> None:
             caption=caption,
             tags=tags,
             gps=extras.get("gps"),
-            exif=extras.get("exif", {}),
+            exif=exif_meta,
         )
 
         duration_ms = int((time.time() - started) * 1000)

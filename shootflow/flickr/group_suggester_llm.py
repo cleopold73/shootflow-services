@@ -180,16 +180,28 @@ def suggest_groups_via_llm(
     caption = _truncate(photo_item.get("caption"), caption_max)
     tags = [str(t).strip() for t in (photo_item.get("tags") or []) if str(t).strip()]
 
+    # Parse EXIF (stored as JSON string in DynamoDB) if present
+    raw_exif = photo_item.get("exif")
+    exif_obj: Dict[str, Any] = {}
+    if isinstance(raw_exif, str):
+        try:
+            exif_obj = json.loads(raw_exif)
+        except Exception:
+            exif_obj = {}
+    elif isinstance(raw_exif, dict):
+        exif_obj = raw_exif
+
     system_msg = (
         "You are assisting with selecting appropriate Flickr groups for a photo. "
         "Only choose groups that clearly match the subject or style as described in the group's description and rules. "
+        "You will receive the photo's title, caption, tags, and a compact selection of EXIF metadata (camera/lens/exposure/etc). "
         "Avoid general spam, off-topic, or rule-violating groups. Prefer quality over quantity. "
         "Respond strictly as a JSON object with the schema: "
         '{ "selected_group_ids": ["<nsid>", "..."] }.'
     )
 
     user_payload = {
-        "photo": {"title": title, "caption": caption, "tags": tags},
+        "photo": {"title": title, "caption": caption, "tags": tags, "exif": exif_obj},
         "candidate_groups": candidates,
         "max_groups": max_return,
         "instructions": "Choose up to max_groups group IDs. Only IDs present in candidate_groups.",
