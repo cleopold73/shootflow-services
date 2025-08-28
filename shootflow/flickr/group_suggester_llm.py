@@ -193,9 +193,9 @@ def suggest_groups_via_llm(
 
     system_msg = (
         "You are assisting with selecting appropriate Flickr groups for a photo. "
-        "Only choose groups that clearly match the subject or style as described in the group's description and rules. "
-        "You will receive the photo's title, caption, tags, and a compact selection of EXIF metadata (camera/lens/exposure/etc). "
-        "Avoid general spam, off-topic, or rule-violating groups. Prefer quality over quantity. "
+        "Only choose groups that clearly match the subject, style, or technical characteristics as described in the group's description and rules. "
+        "You will receive the photo's title, caption, tags, and EXIF metadata. Use camera and exposure details (e.g., camera make/model, lens, focal length, aperture/f-number, shutter speed/exposure time, ISO, white balance, flash, 35mm equivalent, long exposure, macro, night, etc.) to match groups that explicitly focus on those attributes when relevant. "
+        "When gear-specific groups (brand/model/lens/focal length) apply, you may select them; otherwise, prioritize subject/style and technique groups. Do not select off-topic, spammy, or rule-violating groups. Prefer quality over quantity. "
         "Respond strictly as a JSON object with the schema: "
         '{ "selected_group_ids": ["<nsid>", "..."] }.'
     )
