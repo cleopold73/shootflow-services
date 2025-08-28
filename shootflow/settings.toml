@@ -29,20 +29,30 @@ FLICKR_GROUPS_DRY_RUN_ENABLED = false
 
 # Optional: static fallback/bypass group IDs; if non-empty, LLM selection is skipped
 FLICKR_STATIC_GROUP_IDS = []
+# Always-include group IDs (appended after LLM/static suggestions, de-duped)
+FLICKR_INCLUDE_GROUP_IDS = []
+# Exclude/blocklist group IDs (filtered out from suggestions)
+FLICKR_EXCLUDE_GROUP_IDS = ["14944275@N22"]
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 OPENAI_CHAT_MODEL = "gpt-5"
 OPENAI_SECRET_NAME = "OPENAI-API"
 
-LLM_MAX_GROUPS = 12
-LLM_MAX_CANDIDATE_GROUPS = 100
+LLM_MAX_GROUPS = 15
+LLM_MAX_CANDIDATE_GROUPS = 400
 LLM_HTTP_CONNECT_TIMEOUT_SECONDS = 10.0
 LLM_HTTP_READ_TIMEOUT_SECONDS = 120.0
 LLM_HTTP_RETRIES = 3
 LLM_HTTP_BACKOFF_BASE_SECONDS = 1.5
 LLM_GROUP_NAME_MAX_LEN = 120
-LLM_GROUP_DESC_MAX_LEN = 2000
+LLM_GROUP_DESC_MAX_LEN = 1000
 LLM_TITLE_MAX_LEN = 200
 LLM_CAPTION_MAX_LEN = 800
+
+# LLM debugging and dashboard correlation
+# When true, logs the system message and user payload for the LLM request (redacting secrets)
+LLM_LOG_PROMPT = false
+# Optional user tag sent to OpenAI's chat.completions "user" field for dashboard attribution
+OPENAI_USER_TAG = "shootflow"
 
 EXIF_BLOCKLIST = []
 EXIF_MAX_TEXT_LENGTH = 20000
@@ -64,6 +74,8 @@ FLICKR_GROUPS_DRY_RUN_ENABLED = true
 FLICKR_UPLOAD_PUBLIC = false
 DDB_TABLE = "shootflow-photo-metadata-development"
 S3_BUCKET = "shootflowupload-development"
+LLM_LOG_PROMPT = false
+LOG_LEVEL = "INFO"
 
 [production]
 # Production-specific overrides (if any)

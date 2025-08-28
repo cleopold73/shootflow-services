@@ -358,7 +358,7 @@ class FlickrAPIClient:
         self,
         *,
         include_descriptions: bool = True,
-        max_groups: int = 200,
+        max_groups: int = 300,
     ) -> list[dict]:
         """
         Return a list of groups the authenticated user is a member of.
@@ -409,8 +409,10 @@ class FlickrAPIClient:
                 name = _to_text(getattr(item, "name", None) or getattr(item, "path_alias", None) or gid)
             if gid:
                 results.append({"id": gid, "name": name, "description": None})
+                logger.debug(f"Group ID {gid}, Name {name}")
             if len(results) >= max_groups:
                 break
+        logger.debug(f"Retrieved {len(results)} Groups")
 
         # Optionally enrich with descriptions via helper
         if include_descriptions and results:

@@ -195,6 +195,7 @@ def suggest_groups_via_llm(
         "You are assisting with selecting appropriate Flickr groups for a photo. "
         "Only choose groups that clearly match the subject, style, or technical characteristics as described in the group's description and rules. "
         "You will receive the photo's title, caption, tags, and EXIF metadata. Use camera and exposure details (e.g., camera make/model, lens, focal length, aperture/f-number, shutter speed/exposure time, ISO, white balance, flash, 35mm equivalent, long exposure, macro, night, etc.) to match groups that explicitly focus on those attributes when relevant. "
+        "Specifically use the camera brand/make (EXIF:Make or EXIF:Model) to match any brand-focused groups when applicable (e.g., Pentax, Canon, Sony, Fujifilm, Leica, Olympus, Panasonic). "
         "When gear-specific groups (brand/model/lens/focal length) apply, you may select them; otherwise, prioritize subject/style and technique groups. Do not select off-topic, spammy, or rule-violating groups. Prefer quality over quantity. "
         "Respond strictly as a JSON object with the schema: "
         '{ "selected_group_ids": ["<nsid>", "..."] }.'
@@ -220,6 +221,34 @@ def suggest_groups_via_llm(
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
         ],
     }
+
+    # Optional: tag requests in OpenAI dashboard and emit prompt for debugging
+    try:
+        user_tag = getattr(settings, "OPENAI_USER_TAG", None)
+        if user_tag:
+            body["user"] = str(user_tag)
+    except Exception:
+        pass
+
+    if getattr(settings, "LLM_LOG_PROMPT", False):
+        try:
+            logger.info(
+                "llm_prompt messages=%s model=%s",
+                body.get("messages"),
+                body.get("model"),
+            )
+            # Emit a redacted curl for easy reproduction in Playground or curl
+            redacted_key = (str(api_key[:7]) + "…redacted") if isinstance(api_key, str) and len(api_key) > 7 else "***"
+            curl = (
+                f"curl -sS -X POST '{base_url}/chat/completions' "
+                f"-H 'Authorization: Bearer {redacted_key}' -H 'Content-Type: application/json' "
+                f"-d '{json.dumps({k: v for k, v in body.items() if k != 'response_format'}, ensure_ascii=False)}'"
+            )
+            logger.info("llm_prompt_replay curl=%s", curl)
+            logger.info("Tip: Paste system+user messages into OpenAI Playground to ask follow-up questions.")
+        except Exception:
+            # Never let logging break main flow
+            pass
 
     url = f"{base_url}/chat/completions"
     try:
