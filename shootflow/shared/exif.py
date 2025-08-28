@@ -82,6 +82,58 @@ def run_exiftool_json(file_path: str) -> Optional[Dict[str, Any]]:
         _maybe_put(out, "EXIF:GPSLongitude", g("EXIF:GPSLongitude") or g("GPSLongitude"))
         _maybe_put(out, "EXIF:GPSAltitude", g("EXIF:GPSAltitude") or g("GPSAltitude"))
 
+        # Camera body
+        _maybe_put(out, "EXIF:Make", g("EXIF:Make") or g("Make"))
+        _maybe_put(out, "EXIF:Model", g("EXIF:Model") or g("Model") or g("EXIF:CameraModelName") or g("CameraModelName"))
+        _maybe_put(out, "EXIF:SerialNumber", g("EXIF:SerialNumber") or g("SerialNumber"))
+        _maybe_put(out, "Composite:ImageSize", g("Composite:ImageSize") or g("ImageSize"))
+        _maybe_put(out, "EXIF:Orientation", g("EXIF:Orientation") or g("Orientation"))
+
+        # Lens information
+        _maybe_put(out, "EXIF:LensModel", g("EXIF:LensModel") or g("LensModel"))
+        _maybe_put(out, "EXIF:LensID", g("EXIF:LensID") or g("LensID") or g("Composite:LensID"))
+        _maybe_put(out, "Composite:LensID", g("Composite:LensID") or g("LensID") or g("EXIF:LensID"))
+        _maybe_put(out, "EXIF:LensSerialNumber", g("EXIF:LensSerialNumber") or g("LensSerialNumber"))
+
+        # Exposure settings
+        _maybe_put(out, "EXIF:ExposureTime", g("EXIF:ExposureTime") or g("ExposureTime"))
+        _maybe_put(out, "EXIF:ShutterSpeedValue", g("EXIF:ShutterSpeedValue") or g("ShutterSpeedValue"))
+        _maybe_put(out, "EXIF:FNumber", g("EXIF:FNumber") or g("FNumber"))
+        _maybe_put(out, "EXIF:ApertureValue", g("EXIF:ApertureValue") or g("ApertureValue"))
+        _maybe_put(out, "EXIF:MaxApertureValue", g("EXIF:MaxApertureValue") or g("MaxApertureValue"))
+        _maybe_put(out, "EXIF:ISO", g("EXIF:ISO") or g("ISO") or g("EXIF:ISOSpeedRatings") or g("ISOSpeedRatings"))
+        _maybe_put(out, "EXIF:ExposureCompensation", g("EXIF:ExposureCompensation") or g("ExposureCompensation") or g("EXIF:ExposureBiasValue") or g("ExposureBiasValue"))
+        _maybe_put(out, "EXIF:ExposureProgram", g("EXIF:ExposureProgram") or g("ExposureProgram"))
+        _maybe_put(out, "EXIF:ExposureMode", g("EXIF:ExposureMode") or g("ExposureMode"))
+        _maybe_put(out, "EXIF:MeteringMode", g("EXIF:MeteringMode") or g("MeteringMode"))
+        _maybe_put(out, "EXIF:WhiteBalance", g("EXIF:WhiteBalance") or g("WhiteBalance"))
+        _maybe_put(out, "EXIF:Flash", g("EXIF:Flash") or g("Flash"))
+        _maybe_put(out, "EXIF:BrightnessValue", g("EXIF:BrightnessValue") or g("BrightnessValue"))
+        _maybe_put(out, "EXIF:LightSource", g("EXIF:LightSource") or g("LightSource"))
+        _maybe_put(out, "EXIF:Saturation", g("EXIF:Saturation") or g("Saturation"))
+        _maybe_put(out, "EXIF:Contrast", g("EXIF:Contrast") or g("Contrast"))
+        _maybe_put(out, "EXIF:Sharpness", g("EXIF:Sharpness") or g("Sharpness"))
+        _maybe_put(out, "EXIF:ColorSpace", g("EXIF:ColorSpace") or g("ColorSpace"))
+        _maybe_put(out, "EXIF:SceneCaptureType", g("EXIF:SceneCaptureType") or g("SceneCaptureType"))
+        _maybe_put(out, "EXIF:DigitalZoomRatio", g("EXIF:DigitalZoomRatio") or g("DigitalZoomRatio"))
+
+        # Focal length
+        _maybe_put(out, "EXIF:FocalLength", g("EXIF:FocalLength") or g("FocalLength"))
+        _maybe_put(out, "EXIF:FocalLengthIn35mmFormat", g("EXIF:FocalLengthIn35mmFormat") or g("FocalLengthIn35mmFormat"))
+
+        # Dimensions
+        _maybe_put(out, "EXIF:ImageWidth", g("EXIF:ImageWidth") or g("ImageWidth"))
+        _maybe_put(out, "EXIF:ImageHeight", g("EXIF:ImageHeight") or g("ImageHeight"))
+
+        # Dates (numeric/ISO via -n may still be strings from exiftool; preserve as given)
+        _maybe_put(out, "EXIF:DateTimeOriginal", g("EXIF:DateTimeOriginal") or g("DateTimeOriginal"))
+        _maybe_put(out, "EXIF:CreateDate", g("EXIF:CreateDate") or g("CreateDate"))
+        _maybe_put(out, "EXIF:ModifyDate", g("EXIF:ModifyDate") or g("ModifyDate"))
+
+        # Software and processing
+        _maybe_put(out, "EXIF:Software", g("EXIF:Software") or g("Software"))
+        _maybe_put(out, "EXIF:ProcessingSoftware", g("EXIF:ProcessingSoftware") or g("ProcessingSoftware"))
+
         return out
     except Exception as e:
         logger.error("Error running exiftool on %s: %s", file_path, e, exc_info=True)
