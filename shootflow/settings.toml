@@ -25,7 +25,7 @@ FLICKR_SCORE_SCALE = 1000.0
 
 # LLM-based group suggestion configuration
 FLICKR_GROUPS_VIA_LLM_ENABLED = true
-FLICKR_GROUPS_DRY_RUN_ENABLED = false
+FLICKR_GROUPS_DRY_RUN_ENABLED = true
 
 # Optional: static fallback/bypass group IDs; if non-empty, LLM selection is skipped
 FLICKR_STATIC_GROUP_IDS = []
