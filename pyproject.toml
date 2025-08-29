@@ -18,6 +18,7 @@ pyexiftool = "^0.5.6"
 flickr-api = "^0.7.7"
 coverage = "^7.10.4"
 typer = {version = "^0.12.5", extras = ["all"]}
+click = "8.1.7"
 
 [build-system]
 requires = ["poetry-core"]
@@ -25,4 +26,4 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 sf-instagram = "shootflow.tools.get_instagram:main"
-sf = "shootflow.cli:app"
+sf = "shootflow.tools.cli:app"

@@ -259,6 +259,21 @@ class PhotoRepository:
             return best_pid, best_fid
         return None
 
+    def get_item(self, photoId: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetch a single item by photoId and deserialize it into a plain dict.
+        Returns None if the item does not exist.
+        """
+        try:
+            resp = self.ddb.get_item(TableName=self.table_name, Key={"photoId": {"S": photoId}})
+            item = resp.get("Item")
+            if not item:
+                return None
+            return self._deserialize_item(item)
+        except ClientError as e:
+            logger.error("get_item failed for %s: %s", photoId, e, exc_info=True)
+            raise
+
     @staticmethod
     def _deserialize_item(item: Dict[str, Any]) -> Dict[str, Any]:
         """

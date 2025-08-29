@@ -7,6 +7,7 @@ import shootflow.handlers.flickr_poster as flickr_poster
 from shootflow.shared.config import settings
 from shootflow.shared.ddb_repo import PhotoRepository
 import shootflow.flickr.group_suggester_llm as gl
+import shootflow.shared.llm as sllm
 from shootflow.tests.conftest import FakeBoto3SecretsOnly, FakeSecretsManager
 
 
@@ -36,7 +37,7 @@ def _mock_openai_for_integration(monkeypatch, flickr_test_env):
 
     # Use shared test fakes for Secrets Manager
     openai_sm = FakeSecretsManager({"api_key": "sk-test"})
-    monkeypatch.setattr(gl, "boto3", FakeBoto3SecretsOnly(openai_sm), raising=True)
+    monkeypatch.setattr(sllm, "boto3", FakeBoto3SecretsOnly(openai_sm), raising=True)
 
     # Mock OpenAI HTTP to return two groups; LLM logic will filter to candidate groups
     class _RespOK:
@@ -49,7 +50,7 @@ def _mock_openai_for_integration(monkeypatch, flickr_test_env):
                 ]
             }
 
-    monkeypatch.setattr(gl.requests, "post", lambda *a, **k: _RespOK(), raising=True)
+    monkeypatch.setattr(sllm.requests, "post", lambda *a, **k: _RespOK(), raising=True)
 
     # Provide a stub for flickr_api.objects.Group.getGroups() so list_member_groups has candidates
     objects_mod = types.ModuleType("flickr_api.objects")

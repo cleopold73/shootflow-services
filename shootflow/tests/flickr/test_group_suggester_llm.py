@@ -25,8 +25,8 @@ def llm_test_env():
     return {}
 
 
-@patch("shootflow.flickr.group_suggester_llm.boto3.client")
-@patch("shootflow.flickr.group_suggester_llm.requests.post")
+@patch("shootflow.shared.llm.boto3.client")
+@patch("shootflow.shared.llm.requests.post")
 def test_suggest_groups_success_with_truncation(post_mock, boto3_client_mock, llm_test_env):
     # Arrange: candidates and LLM response selecting 3, limited to 2
     class FakeFlickrClient:
@@ -62,8 +62,8 @@ def test_suggest_groups_success_with_truncation(post_mock, boto3_client_mock, ll
     assert result == ["g2", "g3"]
 
 
-@patch("shootflow.flickr.group_suggester_llm.boto3.client")
-@patch("shootflow.flickr.group_suggester_llm.requests.post")
+@patch("shootflow.shared.llm.boto3.client")
+@patch("shootflow.shared.llm.requests.post")
 def test_suggest_groups_parses_wrapped_json(post_mock, boto3_client_mock, llm_test_env):
     # Arrange
     class FakeFlickrClient:
@@ -96,8 +96,8 @@ def test_suggest_groups_parses_wrapped_json(post_mock, boto3_client_mock, llm_te
     assert result == ["g1"]
 
 
-@patch("shootflow.flickr.group_suggester_llm.boto3.client")
-@patch("shootflow.flickr.group_suggester_llm.requests.post")
+@patch("shootflow.shared.llm.boto3.client")
+@patch("shootflow.shared.llm.requests.post")
 def test_suggest_groups_http_400_returns_empty(post_mock, boto3_client_mock, llm_test_env):
     # Arrange
     class FakeFlickrClient:
@@ -128,8 +128,8 @@ def test_suggest_groups_http_400_returns_empty(post_mock, boto3_client_mock, llm
     assert result == []
 
 
-@patch("shootflow.flickr.group_suggester_llm.boto3.client")
-@patch("shootflow.flickr.group_suggester_llm.requests.post")
+@patch("shootflow.shared.llm.boto3.client")
+@patch("shootflow.shared.llm.requests.post")
 def test_suggest_groups_timeout_returns_empty(post_mock, boto3_client_mock, llm_test_env):
     # Arrange: 0 retries to avoid loops; requests.post raises ReadTimeout
     settings.LLM_HTTP_RETRIES = 0
@@ -144,8 +144,10 @@ def test_suggest_groups_timeout_returns_empty(post_mock, boto3_client_mock, llm_
 
     boto3_client_mock.return_value = FakeSecretsManager({"api_key": "sk-test"})
 
+    import shootflow.shared.llm as sllm
+
     def raise_timeout(*a, **k):
-        raise gl.ReadTimeout("timeout")
+        raise sllm.ReadTimeout("timeout")
 
     post_mock.side_effect = raise_timeout
 
@@ -158,8 +160,8 @@ def test_suggest_groups_timeout_returns_empty(post_mock, boto3_client_mock, llm_
     assert result == []
 
 
-@patch("shootflow.flickr.group_suggester_llm.boto3.client")
-@patch("shootflow.flickr.group_suggester_llm.requests.post")
+@patch("shootflow.shared.llm.boto3.client")
+@patch("shootflow.shared.llm.requests.post")
 def test_candidate_group_description_sanitized(post_mock, boto3_client_mock, llm_test_env):
     # Arrange a group with HTML and URLs in the description
     class FakeFlickrClient:
@@ -211,8 +213,8 @@ def test_candidate_group_description_sanitized(post_mock, boto3_client_mock, llm
     assert "<" not in desc and ">" not in desc
 
 
-@patch("shootflow.flickr.group_suggester_llm.boto3.client")
-@patch("shootflow.flickr.group_suggester_llm.requests.post")
+@patch("shootflow.shared.llm.boto3.client")
+@patch("shootflow.shared.llm.requests.post")
 def test_candidate_group_description_strips_repeating_chars(post_mock, boto3_client_mock, llm_test_env):
     # Arrange a group description with decorative repeating characters
     class FakeFlickrClient:
@@ -260,8 +262,8 @@ def test_candidate_group_description_strips_repeating_chars(post_mock, boto3_cli
     assert "Welcome" in desc
 
 
-@patch("shootflow.flickr.group_suggester_llm.boto3.client")
-@patch("shootflow.flickr.group_suggester_llm.requests.post")
+@patch("shootflow.shared.llm.boto3.client")
+@patch("shootflow.shared.llm.requests.post")
 def test_candidate_group_description_strips_repeating_underscores(post_mock, boto3_client_mock, llm_test_env):
     # Arrange a group description with underscore rulers
     class FakeFlickrClient:
