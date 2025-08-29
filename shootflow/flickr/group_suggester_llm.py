@@ -65,6 +65,43 @@ def _truncate(s: Optional[str], max_len: int) -> str:
     return s if len(s) <= max_len else (s[: max_len - 1] + "…")
 
 
+def _strip_urls_and_html(s: Optional[str]) -> str:
+    """
+    Remove HTML tags and URLs from text, and normalize whitespace.
+    - Strips <tags> and their attributes.
+    - Removes http/https URLs and common www. patterns.
+    - Unescapes HTML entities (e.g., &amp; → &).
+    - Removes long runs of repeating punctuation/separators (e.g., ~~~~~, ******, -----, ________).
+    - Collapses repeated whitespace to single spaces and trims.
+    """
+    if not s:
+        return ""
+    txt = str(s)
+    # Unescape HTML entities first (e.g., &amp;)
+    try:
+        import html as _html
+        txt = _html.unescape(txt)
+    except Exception:
+        pass
+    # Remove script/style contents conservatively
+    txt = re.sub(r"<\s*(script|style)[^>]*>.*?<\s*/\s*\1\s*>", " ", txt, flags=re.IGNORECASE | re.DOTALL)
+    # Strip all remaining HTML tags
+    txt = re.sub(r"<[^>]+>", " ", txt)
+    # Remove URLs (http, https, ftp) and common www. patterns
+    url_pattern = r"\b((?:https?|ftp)://\S+|www\.\S+)"
+    txt = re.sub(url_pattern, " ", txt, flags=re.IGNORECASE)
+    # Also remove bare domain.tld paths like example.com/foo when clearly a URL
+    txt = re.sub(r"\b[\w.-]+\.(?:com|org|net|io|co|ai|photo|photos|me|info|dev|app)(?:/\S*)?", " ", txt, flags=re.IGNORECASE)
+    # Collapse long runs of the same non-word, non-space character (decorative rulers)
+    # Example: "~~~~~~~~~~~", "***********", "-----" → single instance
+    txt = re.sub(r"([^\w\s])\1{3,}", r"\1", txt)
+    # Also collapse long runs of underscores (word char) used as separators → single underscore
+    txt = re.sub(r"(_)\1{3,}", r"\1", txt)
+    # Collapse whitespace
+    txt = re.sub(r"\s+", " ", txt).strip()
+    return txt
+
+
 def _extract_json_object(text: str) -> Dict[str, Any]:
     """
     Try to parse a JSON object from the response content.
@@ -173,7 +210,9 @@ def suggest_groups_via_llm(
         if not gid:
             continue
         name = _truncate(g.get("name"), name_max)
-        desc = _truncate(g.get("description"), desc_max)
+        raw_desc = g.get("description")
+        clean_desc = _strip_urls_and_html(raw_desc)
+        desc = _truncate(clean_desc, desc_max)
         candidates.append({"id": gid, "name": name, "description": desc})
 
     title = _truncate(photo_item.get("title"), title_max)

@@ -156,3 +156,152 @@ def test_suggest_groups_timeout_returns_empty(post_mock, boto3_client_mock, llm_
 
     # Assert: gracefully degrades to empty
     assert result == []
+
+
+@patch("shootflow.flickr.group_suggester_llm.boto3.client")
+@patch("shootflow.flickr.group_suggester_llm.requests.post")
+def test_candidate_group_description_sanitized(post_mock, boto3_client_mock, llm_test_env):
+    # Arrange a group with HTML and URLs in the description
+    class FakeFlickrClient:
+        def __init__(self, groups):
+            self._groups = groups
+        def list_member_groups(self, *, include_descriptions=True, max_groups=200):
+            return self._groups[:max_groups]
+
+    dirty_desc = (
+        "<b>Great group</b> visit http://example.com and www.test.com "
+        '<a href="https://foo.bar/path">link</a> &amp; enjoy'
+    )
+    flickr_client = FakeFlickrClient([{"id": "g1", "name": "One", "description": dirty_desc}])
+
+    # Secrets Manager returns API key
+    boto3_client_mock.return_value = FakeSecretsManager({"api_key": "sk-test"})
+
+    captured_body = {}
+
+    class RespOK:
+        status_code = 200
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps({"selected_group_ids": ["g1"]})}}]}
+
+    def capture_post(url, headers=None, json=None, timeout=None):
+        captured_body["body"] = json
+        return RespOK()
+
+    post_mock.side_effect = capture_post
+
+    # Act
+    result = gl.suggest_groups_via_llm(
+        {"title": "T", "caption": "C", "tags": []}, flickr_client=flickr_client, settings=settings
+    )
+
+    # Assert: selection works and body got sanitized description
+    assert result == ["g1"]
+    body = captured_body.get("body")
+    assert body is not None
+    # Extract candidate description sent to the LLM
+    user_msg = body["messages"][1]["content"]
+    payload = json.loads(user_msg)
+    cand = payload["candidate_groups"][0]
+    desc = cand["description"]
+    assert "http" not in desc
+    assert "www." not in desc
+    assert "example.com" not in desc
+    assert "foo.bar" not in desc
+    assert "<" not in desc and ">" not in desc
+
+
+@patch("shootflow.flickr.group_suggester_llm.boto3.client")
+@patch("shootflow.flickr.group_suggester_llm.requests.post")
+def test_candidate_group_description_strips_repeating_chars(post_mock, boto3_client_mock, llm_test_env):
+    # Arrange a group description with decorative repeating characters
+    class FakeFlickrClient:
+        def __init__(self, groups):
+            self._groups = groups
+        def list_member_groups(self, *, include_descriptions=True, max_groups=200):
+            return self._groups[:max_groups]
+
+    dirty_desc = "~~~~~~ Welcome ****** Amazing Shots ----- ----- ######"
+    flickr_client = FakeFlickrClient([{"id": "g1", "name": "One", "description": dirty_desc}])
+
+    # Secrets Manager returns API key
+    boto3_client_mock.return_value = FakeSecretsManager({"api_key": "sk-test"})
+
+    captured_body = {}
+
+    class RespOK:
+        status_code = 200
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps({"selected_group_ids": ["g1"]})}}]}
+
+    def capture_post(url, headers=None, json=None, timeout=None):
+        captured_body["body"] = json
+        return RespOK()
+
+    post_mock.side_effect = capture_post
+
+    # Act
+    result = gl.suggest_groups_via_llm(
+        {"title": "T", "caption": "C", "tags": []}, flickr_client=flickr_client, settings=settings
+    )
+
+    # Assert: selection works and repeating sequences collapsed/removed
+    assert result == ["g1"]
+    body = captured_body.get("body")
+    assert body is not None
+    user_msg = body["messages"][1]["content"]
+    payload = json.loads(user_msg)
+    desc = payload["candidate_groups"][0]["description"]
+    # Ensure long runs no longer present
+    assert "~~~~" not in desc
+    assert "****" not in desc
+    assert "----- -----" not in desc  # collapsed by rule
+    # Still keeps readable words
+    assert "Welcome" in desc
+
+
+@patch("shootflow.flickr.group_suggester_llm.boto3.client")
+@patch("shootflow.flickr.group_suggester_llm.requests.post")
+def test_candidate_group_description_strips_repeating_underscores(post_mock, boto3_client_mock, llm_test_env):
+    # Arrange a group description with underscore rulers
+    class FakeFlickrClient:
+        def __init__(self, groups):
+            self._groups = groups
+        def list_member_groups(self, *, include_descriptions=True, max_groups=200):
+            return self._groups[:max_groups]
+
+    dirty_desc = "______________ Welcome to_the_group ________________"
+    flickr_client = FakeFlickrClient([{"id": "g1", "name": "One", "description": dirty_desc}])
+
+    # Secrets Manager returns API key
+    boto3_client_mock.return_value = FakeSecretsManager({"api_key": "sk-test"})
+
+    captured_body = {}
+
+    class RespOK:
+        status_code = 200
+        def json(self):
+            return {"choices": [{"message": {"content": json.dumps({"selected_group_ids": ["g1"]})}}]}
+
+    def capture_post(url, headers=None, json=None, timeout=None):
+        captured_body["body"] = json
+        return RespOK()
+
+    post_mock.side_effect = capture_post
+
+    # Act
+    result = gl.suggest_groups_via_llm(
+        {"title": "T", "caption": "C", "tags": []}, flickr_client=flickr_client, settings=settings
+    )
+
+    # Assert: selection works and underscore sequences collapsed
+    assert result == ["g1"]
+    body = captured_body.get("body")
+    assert body is not None
+    user_msg = body["messages"][1]["content"]
+    payload = json.loads(user_msg)
+    desc = payload["candidate_groups"][0]["description"]
+    # Ensure long runs of underscores no longer present
+    assert "____" not in desc
+    # Keeps readable words around underscores
+    assert "Welcome" in desc
