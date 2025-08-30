@@ -2,6 +2,7 @@
 import logging
 from typing import Optional, List
 from pathlib import Path
+from enum import Enum
 
 import typer
 
@@ -11,6 +12,11 @@ from shootflow.shared.s3 import S3Storage
 from shootflow.tools.get_instagram import main as get_instagram_main
 
 app = typer.Typer(help="ShootFlow CLI: ingest helpers and utilities.")
+
+
+class Profile(str, Enum):
+    development = "development"
+    production = "production"
 
 
 def _version_callback(value: bool):
@@ -32,9 +38,25 @@ def common(
         count=True,
         help="Increase verbosity: -v INFO, -vv DEBUG",
     ),
+    profile: Profile = typer.Option(
+        Profile.development,
+        "--profile",
+        "-p",
+        help="Dynaconf profile/environment to use (development or production). Defaults to development.",
+    ),
     version: Optional[bool] = typer.Option(None, "--version", callback=_version_callback, is_eager=True),
 ):
     """Common options for all commands."""
+    # Switch Dynaconf environment early so all subsequent settings reflect the chosen profile
+    try:
+        # settings is a Dynaconf instance; setenv() switches the active environment at runtime
+        # Convert Enum to its string value
+        chosen_profile = profile.value if isinstance(profile, Enum) else str(profile)
+        settings.setenv(chosen_profile)
+    except Exception:
+        # Fallback: keep current environment if switching fails for any reason
+        pass
+
     level = logging.WARNING
     if verbose == 1:
         level = logging.INFO

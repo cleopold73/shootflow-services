@@ -79,4 +79,6 @@ LOG_LEVEL = "INFO"
 
 [production]
 # Production-specific overrides (if any)
+DDB_TABLE = "shootflow-photo-metadata-production"
+S3_BUCKET = "shootflowupload-production"
 
