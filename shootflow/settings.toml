@@ -34,7 +34,7 @@ FLICKR_INCLUDE_GROUP_IDS = []
 # Exclude/blocklist group IDs (filtered out from suggestions)
 FLICKR_EXCLUDE_GROUP_IDS = ["14944275@N22"]
 OPENAI_BASE_URL = "https://api.openai.com/v1"
-OPENAI_CHAT_MODEL = "gpt-5"
+OPENAI_CHAT_MODEL = "gpt-5-mini"
 OPENAI_SECRET_NAME = "OPENAI-API"
 
 LLM_MAX_GROUPS = 15
