@@ -1,6 +1,7 @@
 name: Deploy Infrastructure
 
 on:
+  pull_request:
   push:
     branches:
       - main
@@ -14,12 +15,11 @@ env:
   AWS_REGION: us-east-1      # single source of truth for region
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, leia, ubuntu-24.04, disposable, ci]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -42,6 +42,7 @@ jobs:
         run: |
           python3 -m pip install --user pipx
           python3 -m pipx ensurepath
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install Poetry
         run: |
@@ -54,8 +55,12 @@ jobs:
         run: poetry run pytest -q
 
   build:
+    if: github.repository == 'cleopold73/shootflow-services' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      id-token: write
     needs: [test]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, leia, ubuntu-24.04, disposable, ci]
     outputs:
       image-digest: ${{ steps.build-image.outputs.digest }}
     steps:
@@ -77,6 +82,7 @@ jobs:
         run: |
           python3 -m pip install --user pipx
           python3 -m pipx ensurepath
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install Poetry
         run: |
@@ -136,8 +142,12 @@ jobs:
           cache-to: type=gha,mode=max
 
   trigger-infra:
+    if: github.repository == 'cleopold73/shootflow-services' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      id-token: write
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, leia, ubuntu-24.04, disposable, ci]
     steps:
       - name: Configure AWS credentials (for account ID)
         uses: aws-actions/configure-aws-credentials@v2
@@ -179,11 +189,12 @@ jobs:
           printf "%s\n" "${IMAGE_URI}" > shootflow_infra/image_uri.txt
           echo "Wrote IMAGE_URI to shootflow_infra/image_uri.txt"
 
-      - name: Commit and push update to infra repo
+      - name: Propose the immutable image through an infrastructure PR
         shell: bash
         working-directory: infra-repo
         env:
           CI_COMMIT_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ secrets.INFRA_REPO_PAT }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -191,9 +202,14 @@ jobs:
           # Mask the 12-digit AWS account ID at the start of the IMAGE_URI for the commit message
           MASKED_IMAGE_URI="$(echo "${IMAGE_URI}" | sed -E 's#^[0-9]{12}#************#')"
           if [[ -n "$(git status --porcelain)" ]]; then
+            branch="automation/services-${CI_COMMIT_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            git switch -c "$branch"
             git add shootflow_infra/image_uri.txt
             git commit -m "chore: update image_uri.txt to ${MASKED_IMAGE_URI} (source: ${CI_COMMIT_SHA})"
-            git push origin HEAD:main
+            git push origin "HEAD:$branch"
+            gh pr create --repo cleopold73/shootflow-infra --base main --head "$branch" \
+              --title "Deploy services image ${CI_COMMIT_SHA}" \
+              --body "Update the immutable image built and tested by services run ${GITHUB_RUN_ID}. Infrastructure validation and human merge remain required."
           else
             echo "No changes to commit."
           fi
