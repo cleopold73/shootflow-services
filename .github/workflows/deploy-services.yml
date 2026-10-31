@@ -54,6 +54,22 @@ jobs:
       - name: Run unit tests
         run: poetry run pytest -q
 
+      - name: Build and smoke-test the Lambda image before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          poetry build -f wheel
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          docker build --platform linux/amd64 --tag shootflow-ci \
+            --build-arg "WHEEL_FILE=$(basename "${wheels[0]}")" \
+            --build-arg "EXIFTOOL_VERSION=${EXIFTOOL_VERSION}" \
+            --build-arg "PYTHON_VERSION=${PYTHON_VERSION}" .
+          docker run --rm --entrypoint /bin/sh shootflow-ci -ec \
+            'test "$(exiftool -ver)" = "$1"; python -c "import ssl, shootflow; ssl.create_default_context()"' \
+            smoke "${EXIFTOOL_VERSION}"
+
   build:
     if: github.repository == 'cleopold73/shootflow-services' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     permissions:
